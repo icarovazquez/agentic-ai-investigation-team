@@ -46,7 +46,7 @@ AGENT_MODEL_MAP = {
 AGENT_MAX_TOKENS = {
     "incident_framing_agent": 2500,
     "hypothesis_generator_agent": 2000,
-    "evidence_planning_agent": 6000,
+    "evidence_planning_agent": 8000,
     "evidence_analyst_agent": 2500,
     "hypothesis_challenger_agent": 2500,
     "root_cause_remediation_agent": 2500,
