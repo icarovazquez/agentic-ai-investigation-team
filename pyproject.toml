@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "investigation-team"
+version = "0.1.0"
+description = "Agentic AI investigation team: vendor-agnostic multi-agent root cause analysis"
+requires-python = ">=3.10"
+dependencies = [
+    "aisuite[anthropic]",
+    "anthropic",
+    "langfuse>2.0.0",
+    "networkx",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
