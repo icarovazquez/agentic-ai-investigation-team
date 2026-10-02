@@ -89,15 +89,15 @@ def trim_messages(messages, max_chars=12000):
 
 
 @observe(name="llm_call", as_type='generation')
-def llm_call(agent_name: str, messages: list, temperature: float = 1.0, tools: list = None) -> dict:
-    """
+   def llm_call(agent_name: str, messages: list, temperature: float = 1.0, tools: list = None, max_tokens: Optional[int] = None) -> dict:    """
     Observability wrapper that all agents use when calling the LLM.
     Logs model, input, output, and token usage to Langfuse.
     """
 
     selected_model = AGENT_MODEL_MAP.get(agent_name, DEFAULT_AGENT_MODEL)
 
-    max_tokens = AGENT_MAX_TOKENS.get(agent_name, 3000)
+    if max_tokens is None:
+       max_tokens = AGENT_MAX_TOKENS.get(agent_name, 3000)
 
     messages = trim_messages(messages, max_chars=12000)
 
@@ -282,6 +282,7 @@ Return ONLY the Python dictionary.
             },
         ],
         temperature=0.0,
+        max_tokens=AGENT_MAX_TOKENS.get(agent_name, 3000),
     )
 
     return parse_agent_response(
