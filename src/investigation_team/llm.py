@@ -15,6 +15,7 @@ to already be set, the same way it would be in any other deployment
 from __future__ import annotations
 
 import ast
+import json
 from typing import Any, Dict, List, Optional
 
 import aisuite as ai
@@ -180,20 +181,25 @@ def parse_agent_response(
     raw_output: str,
 ) -> Dict[str, Any]:
 
-    cleaned = clean_llm_dict_output(
-        raw_output
-    )
+    cleaned = clean_llm_dict_output(raw_output)
 
+    # Try JSON first -- models asked for "a Python dictionary" often
+    # produce JSON anyway (true/false/null, double-quoted strings).
+    # Fall back to ast.literal_eval for genuinely Python-flavored
+    # output (single-quoted strings, bare True/False/None) that
+    # isn't valid JSON. This accepts either convention rather than
+    # relying on a prompt instruction to pick one.
     try:
-        parsed = ast.literal_eval(
-            cleaned
-        )
-
-    except (ValueError, SyntaxError) as exc:
-        raise ValueError(
-            "Unable to parse agent response as a Python dictionary.\n\n"
-            f"Cleaned output:\n{cleaned}"
-        ) from exc
+        parsed = json.loads(cleaned)
+    except (ValueError, json.JSONDecodeError):
+        try:
+            parsed = ast.literal_eval(cleaned)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError(
+                "Unable to parse agent response as a Python "
+                "dictionary or JSON object.\n\n"
+                f"Cleaned output:\n{cleaned}"
+            ) from exc
 
     if not isinstance(parsed, dict):
         raise TypeError(
