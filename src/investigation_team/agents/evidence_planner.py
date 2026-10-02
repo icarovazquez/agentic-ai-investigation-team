@@ -202,6 +202,21 @@ Return ONLY a Python dictionary with exactly this shape:
     ]
 }
 
+Do NOT organize tests into phases, groups, or any nested investigation
+plan. Do NOT add fields beyond the seven listed in the schema. This is
+WRONG and must never be produced:
+
+{
+    "phase_1_immediate": {
+        "priority": 1,
+        "queries": [...]
+    }
+}
+
+The required shape is always a single flat list under "tests" — never
+nested under phases, groups, or any other wrapper key, regardless of
+how many gaps or systemic concerns are present in the context.
+
 For topology and reachability tests, parameters may include:
 {
     "source_entity_id": str,
