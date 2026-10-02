@@ -239,6 +239,15 @@ Do not:
 - include headings;
 - include prose outside the dictionary.
 
+If the original response used a different structure entirely (nested
+phases, groups, or any wrapper other than the schema's own top-level
+key), FLATTEN it: extract only the fields the schema actually asks
+for, for each individual item, and discard every other field
+(explanatory notes, phase groupings, discriminator descriptions,
+rationale fields not in the schema, etc.) even if that means the
+repaired response is substantially shorter than the original.
+
+
 For hypothesis status, ONLY these values are valid:
 
 - supported
