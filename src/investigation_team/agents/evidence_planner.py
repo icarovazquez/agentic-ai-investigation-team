@@ -185,6 +185,11 @@ analyzed, and it was not sufficient. In this case:
     If more than 2 gaps exist for one hypothesis, prioritize the
     single highest-value gap and combine the rest into that same
     test's objective — do NOT write one test per listed gap.
+19. Across ALL hypotheses combined, this response must contain NO
+    MORE than 8 tests total, regardless of how many gaps or
+    hypotheses exist. If there are more real gaps than that, pick
+    the 8 highest-value ones across the whole investigation, not
+    per hypothesis.
 
 Return ONLY a Python dictionary with exactly this shape:
 
