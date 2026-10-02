@@ -191,15 +191,17 @@ def parse_agent_response(
     # relying on a prompt instruction to pick one.
     try:
         parsed = json.loads(cleaned)
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError) as json_exc:
         try:
             parsed = ast.literal_eval(cleaned)
-        except (ValueError, SyntaxError) as exc:
+        except (ValueError, SyntaxError) as ast_exc:
             raise ValueError(
                 "Unable to parse agent response as a Python "
                 "dictionary or JSON object.\n\n"
+                f"JSON parser said: {json_exc}\n"
+                f"Python parser said: {ast_exc}\n\n"
                 f"Cleaned output:\n{cleaned}"
-            ) from exc
+            ) from ast_exc
 
     if not isinstance(parsed, dict):
         raise TypeError(
