@@ -1,38 +1,98 @@
 """
-Evidence Planner Agent: decides what to check and how, deterministically
-in code wherever possible. Third agent in the chain, and the one that
-re-runs each round of the reasoning loop.
+Evidence Planner Agent: decides WHICH gaps matter and HOW MANY are
+worth investigating, deterministically capped in code. Produces an
+EvidenceGapSelection, not full test objects -- writing fully-formed,
+correctly-sized test objects is evidence_test_creation_agent's job
+(agents/evidence_test_creator.py). Splitting these was necessary
+because one agent doing both kept failing in four different ways:
+invalid syntax, abandoned schema, excessive volume, and composite
+hypothesis_ids -- and an explicit "max 8 tests total" rule in the
+prompt was ignored twice in a row even after the per-hypothesis cap
+was already enforced in code.
 """
 
 from __future__ import annotations
 
+import re
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 from langfuse import observe
 
 from ..capabilities.registry import available_capability_names, capability_descriptions
-from ..domain import EvidencePlan, EvidenceTest
 from ..llm import llm_call, parse_or_repair_agent_response
 from .evidence_analyst import EvidenceAnalysis, normalize_hypothesis_id
 from .hypothesis_challenger import ChallengeReport
 from .hypothesis_generator import HypothesisSet
 from .incident_framing import IncidentFrame
 
-EVIDENCE_PLAN_SCHEMA = """
+EVIDENCE_GAP_SCHEMA = """
 {
-    "tests": [
+    "gaps": [
         {
             "hypothesis_id": str,
-            "objective": str,
-            "capability": str,
-            "parameters": dict,
-            "expected_supporting_observations": list[str],
-            "expected_falsifying_observations": list[str],
+            "gap_description": str,
+            "suggested_capability": str,
             "priority": int
         }
     ]
 }
 """
+
+MAX_GAPS_PER_HYPOTHESIS = 2
+MAX_TOTAL_GAPS = 8
+
+
+@dataclass
+class EvidenceGap:
+    """
+    One identified gap in what's known about a hypothesis -- not yet
+    a test. suggested_capability is a strong default that
+    evidence_test_creation_agent may override with justification,
+    not a hard constraint.
+    """
+
+    hypothesis_id: str
+    gap_description: str
+    suggested_capability: str
+    priority: int = 1
+
+    def validate(self) -> None:
+        if not self.hypothesis_id.strip():
+            raise ValueError("hypothesis_id cannot be empty.")
+        if not self.gap_description.strip():
+            raise ValueError("gap_description cannot be empty.")
+        if not self.suggested_capability.strip():
+            raise ValueError("suggested_capability cannot be empty.")
+        if self.priority < 1:
+            raise ValueError("priority must be at least 1.")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EvidenceGapSelection:
+    """
+    A bounded, already-capped list of gaps worth investigating this
+    round. By the time this exists, MAX_GAPS_PER_HYPOTHESIS and
+    MAX_TOTAL_GAPS have already been enforced -- nothing downstream
+    needs to re-check volume.
+    """
+
+    incident_id: str
+    gaps: List[EvidenceGap]
+
+    def validate(self) -> None:
+        if not self.incident_id.strip():
+            raise ValueError("incident_id cannot be empty.")
+        if not self.gaps:
+            raise ValueError("EvidenceGapSelection must contain at least one gap.")
+        for gap in self.gaps:
+            gap.validate()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"incident_id": self.incident_id, "gaps": [g.to_dict() for g in self.gaps]}
 
 
 def build_evidence_planning_context(
@@ -41,23 +101,9 @@ def build_evidence_planning_context(
     prior_evidence_analysis: Optional[EvidenceAnalysis] = None,
     prior_challenge_report: Optional[ChallengeReport] = None,
 ) -> Dict[str, Any]:
-    """
-    Build the bounded context supplied to the Evidence Planning Agent.
-
-    If prior_evidence_analysis / prior_challenge_report are supplied,
-    this is a subsequent reasoning-loop round: the context includes
-    what's still missing so far, so planning targets those gaps
-    specifically rather than re-deriving the same tests as round 1.
-    """
-
     context: Dict[str, Any] = {
         "incident_frame": incident_frame.to_dict(),
-
-        "hypotheses": [
-            hypothesis.to_dict()
-            for hypothesis in hypothesis_set.hypotheses
-        ],
-
+        "hypotheses": [h.to_dict() for h in hypothesis_set.hypotheses],
         "available_capabilities": available_capability_names(),
         "capability_descriptions": capability_descriptions(),
     }
@@ -65,56 +111,119 @@ def build_evidence_planning_context(
     if prior_evidence_analysis is not None:
         context["prior_round_missing_evidence"] = [
             {
-                "hypothesis_id": assessment.hypothesis_id,
-                "status": assessment.status.value,
-                "confidence": assessment.confidence,
-                "missing_evidence": assessment.missing_evidence,
+                "hypothesis_id": a.hypothesis_id,
+                "status": a.status.value,
+                "confidence": a.confidence,
+                "missing_evidence": a.missing_evidence,
             }
-            for assessment in prior_evidence_analysis.assessments
-            if assessment.missing_evidence
+            for a in prior_evidence_analysis.assessments
+            if a.missing_evidence
         ]
 
     if prior_challenge_report is not None:
         context["prior_round_challenger_gaps"] = [
             {
-                "hypothesis_id": challenge.hypothesis_id,
-                "challenge_outcome": challenge.challenge_outcome,
-                "additional_evidence_needed": challenge.additional_evidence_needed,
+                "hypothesis_id": c.hypothesis_id,
+                "challenge_outcome": c.challenge_outcome,
+                "additional_evidence_needed": c.additional_evidence_needed,
             }
-            for challenge in prior_challenge_report.challenges
-            if challenge.additional_evidence_needed
+            for c in prior_challenge_report.challenges
+            if c.additional_evidence_needed
         ]
 
     return context
+
+
+def _priority(item: Dict[str, Any]) -> int:
+    try:
+        return int(item.get("priority", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def select_capped_gaps(
+    raw_gaps: List[Dict[str, Any]],
+    hypothesis_set: HypothesisSet,
+) -> List[Dict[str, Any]]:
+    """
+    Deterministic post-processing of the model's gap list: drop
+    malformed items, normalize hypothesis ids, then cap per
+    hypothesis and in total. Pure function, no LLM involved.
+    """
+    required = ("hypothesis_id", "gap_description", "suggested_capability")
+
+    # Step 1: drop items missing required fields
+    valid: List[Dict[str, Any]] = []
+    for i, item in enumerate(raw_gaps):
+        if not isinstance(item, dict):
+            print(f"⚠ evidence_planning_agent gap #{i + 1} is not a dict -- skipping it")
+            continue
+        missing = [f for f in required if f not in item or not item[f]]
+        if missing:
+            print(
+                f"⚠ evidence_planning_agent gap #{i + 1} is missing "
+                f"required field(s) {missing} -- skipping it: {item}"
+            )
+            continue
+        valid.append(dict(item))
+
+    # Step 2: normalize hypothesis_id and group by hypothesis
+    by_hypothesis: Dict[str, List[Dict[str, Any]]] = {}
+    canonical_ids = {h.hypothesis_id for h in hypothesis_set.hypotheses}
+    for item in valid:
+        raw_id = str(item["hypothesis_id"])
+        # A composite id like "H1_H2_H4" would silently resolve to H1
+        # via the digit fallback in normalize_hypothesis_id. A gap must
+        # address exactly one hypothesis, so reject it instead.
+        if raw_id not in canonical_ids and len(set(re.findall(r"\d+", raw_id))) > 1:
+            print(
+                f"⚠ evidence_planning_agent gap has composite "
+                f"hypothesis_id '{raw_id}' -- skipping it"
+            )
+            continue
+        try:
+            normalized_id = normalize_hypothesis_id(
+                returned_id=item["hypothesis_id"],
+                hypothesis_set=hypothesis_set,
+            )
+        except ValueError:
+            print(
+                f"⚠ evidence_planning_agent gap has unresolvable "
+                f"hypothesis_id '{item['hypothesis_id']}' -- skipping it"
+            )
+            continue
+        item["hypothesis_id"] = normalized_id
+        by_hypothesis.setdefault(normalized_id, []).append(item)
+
+    # Step 3: deterministic caps -- per hypothesis, then total
+    capped: List[Dict[str, Any]] = []
+    for hyp_id, items in by_hypothesis.items():
+        ordered = sorted(items, key=_priority)
+        capped.extend(ordered[:MAX_GAPS_PER_HYPOTHESIS])
+        if len(ordered) > MAX_GAPS_PER_HYPOTHESIS:
+            print(
+                f"⚠ evidence_planning_agent proposed {len(ordered)} gaps "
+                f"for hypothesis '{hyp_id}' -- capping to "
+                f"{MAX_GAPS_PER_HYPOTHESIS} by priority"
+            )
+
+    if len(capped) > MAX_TOTAL_GAPS:
+        print(
+            f"⚠ evidence_planning_agent proposed {len(capped)} gaps "
+            f"total -- capping to {MAX_TOTAL_GAPS} by priority"
+        )
+        capped = sorted(capped, key=_priority)[:MAX_TOTAL_GAPS]
+
+    return capped
 
 
 @observe(name="evidence_planning_agent")
 def evidence_planning_agent(
     incident_frame: IncidentFrame,
     hypothesis_set: HypothesisSet,
-    round_number: int = 1,
     prior_evidence_analysis: Optional[EvidenceAnalysis] = None,
     prior_challenge_report: Optional[ChallengeReport] = None,
-) -> EvidencePlan:
-    """
-    Convert competing hypotheses into explicit capability requests.
-
-    This agent plans evidence collection only.
-    It does not execute tests or judge hypotheses.
-
-    round_number identifies which reasoning-loop pass this is
-    (1 for the first round). It is used only to keep test_id unique
-    across rounds within one investigation — evidence_results
-    accumulates across rounds, so a round-2 test_id colliding with
-    a round-1 test_id would make two distinct tests indistinguishable
-    in the combined results list.
-
-    When prior_evidence_analysis / prior_challenge_report are
-    supplied, this is a subsequent reasoning-loop round: planning
-    should prioritize the gaps those identified over re-deriving
-    tests from the hypotheses alone.
-    """
-
+) -> EvidenceGapSelection:
     agent_name = "evidence_planning_agent"
 
     context = build_evidence_planning_context(
@@ -125,125 +234,80 @@ def evidence_planning_agent(
     )
 
     is_subsequent_round = (
-        prior_evidence_analysis is not None
-        or prior_challenge_report is not None
+        prior_evidence_analysis is not None or prior_challenge_report is not None
     )
 
     system_prompt = """
 You are the Evidence Planning Agent for an autonomous network
 investigation team.
 
-Your responsibility is to convert each hypothesis into a minimal set
-of deterministic evidence tests.
+Your ONLY job is to identify which gaps in the evidence are worth
+investigating this round. You do NOT write detailed test
+objectives, parameters, or expected observations -- that is a
+separate agent's job. You only identify WHAT is missing and WHICH
+capability would likely address it.
 
 Important rules:
 
 1. Do NOT decide whether a hypothesis is correct.
 2. Do NOT collect evidence yourself.
 3. Do NOT invoke executors directly.
-4. Request only capabilities listed under available_capabilities.
-5. Every test must have a clear objective.
-6. Every test must identify which hypothesis it evaluates.
-7. Reuse a test when one evidence request can evaluate multiple ideas,
-   but each returned test must reference one hypothesis_id.
-8. Prefer the smallest set of high-information tests. Maximum 2
-   tests per hypothesis per round — if you find yourself writing a
-   3rd test for the same hypothesis, combine it into one of the
-   first 2 by broadening that test's objective instead.
-9. Use only entity IDs present in the supplied context.
-10. Parameters must contain only values needed by the capability.
-11. Do not invent capability names.
-12. Do not use benchmark ground truth.
-13. A single test's objective may ask a capability to report on
-    MULTIPLE related diagnostic questions at once (e.g. "check
-    error counters, administrative status, and signal quality on
-    this interface" is ONE test, not three) — capabilities return
-    whatever evidence they have for the requested entities, so
-    splitting related questions about the same entity into separate
-    tests wastes budget without adding information.
+4. Do NOT write test objectives, parameters, or expected
+   observations -- only a short gap_description.
+5. Every gap must identify exactly ONE hypothesis, using its exact
+   hypothesis_id from the context. Never combine ids.
+6. suggested_capability must be one of available_capabilities.
+7. Maximum 2 gaps per hypothesis.
+8. Maximum 8 gaps total, across all hypotheses combined.
+9. Use only entity IDs / hypotheses present in the supplied context.
+10. Do not invent capability names.
+11. Do not use benchmark ground truth.
 
 If prior_round_missing_evidence or prior_round_challenger_gaps are
 present in the context, this is NOT the first planning round for
-this investigation. Evidence has already been collected and
-analyzed, and it was not sufficient. In this case:
+this investigation. In this case:
 
-14. Prioritize tests that would resolve the specific gaps listed in
-    prior_round_challenger_gaps first — these come from a
-    dedicated adversarial review of the leading hypothesis, and
-    are the highest-value gaps to close.
-15. Then address gaps in prior_round_missing_evidence not already
-    covered by a test targeting the challenger gaps.
-16. Do NOT repeat a test that would collect the same evidence as a
-    prior round already attempted and found insufficient — the gap
-    exists because that evidence is genuinely unavailable or was
-    already checked, not because no one asked. Plan a DIFFERENT
-    test/capability/parameters that could close the gap another way,
-    or state within the objective why no further test can close it.
-17. It is acceptable for this round's plan to contain fewer tests
-    than the hypothesis count, if only a few real gaps remain.
-18. The max-2-tests-per-hypothesis rule (rule 8) still applies here.
-    If more than 2 gaps exist for one hypothesis, prioritize the
-    single highest-value gap and combine the rest into that same
-    test's objective — do NOT write one test per listed gap.
-19. Across ALL hypotheses combined, this response must contain NO
-    MORE than 8 tests total, regardless of how many gaps or
-    hypotheses exist. If there are more real gaps than that, pick
-    the 8 highest-value ones across the whole investigation, not
-    per hypothesis.
+12. Prioritize gaps from prior_round_challenger_gaps first -- these
+    come from a dedicated adversarial review of the leading
+    hypothesis, and are the highest-value gaps to close.
+13. Then address gaps in prior_round_missing_evidence not already
+    covered.
+14. Do NOT repeat a gap that would collect the same evidence a
+    prior round already attempted and found insufficient -- describe
+    a DIFFERENT angle that could close it another way, or omit it.
 
 Return ONLY a Python dictionary with exactly this shape:
 
 {
-    "tests": [
+    "gaps": [
         {
             "hypothesis_id": str,
-            "objective": str,
-            "capability": str,
-            "parameters": dict,
-            "expected_supporting_observations": list[str],
-            "expected_falsifying_observations": list[str],
+            "gap_description": str,
+            "suggested_capability": str,
             "priority": int
         }
     ]
 }
 
-Do NOT organize tests into phases, groups, or any nested investigation
-plan. Do NOT add fields beyond the seven listed in the schema. This is
-WRONG and must never be produced:
-
-{
-    "phase_1_immediate": {
-        "priority": 1,
-        "queries": [...]
-    }
-}
-
-The required shape is always a single flat list under "tests" — never
-nested under phases, groups, or any other wrapper key, regardless of
-how many gaps or systemic concerns are present in the context.
-
-For topology and reachability tests, parameters may include:
-{
-    "source_entity_id": str,
-    "target_entity_id": str
-}
-
-For network_state tests, parameters may include:
-{
-    "entity_ids": list[str]
-}
-
 Priority 1 means highest priority.
 """
+
+    subsequent_note = (
+        "This is a subsequent reasoning round. Prior evidence was insufficient "
+        "to reach a confident, unchallenged conclusion. Focus on the specific "
+        "gaps identified above."
+        if is_subsequent_round
+        else ""
+    )
 
     user_prompt = f"""
 Investigation context:
 
 {context}
 
-{"This is a subsequent reasoning round. Prior evidence was insufficient to reach a confident, unchallenged conclusion. Focus this round's plan on closing the specific gaps identified above." if is_subsequent_round else ""}
+{subsequent_note}
 
-Create the evidence collection plan.
+Identify the evidence gaps worth investigating this round.
 """
 
     response = llm_call(
@@ -258,134 +322,34 @@ Create the evidence collection plan.
     print("Evidence planning LLM call completed")
 
     content = response["content"]
-
     if not content:
-        raise ValueError(
-            "Evidence Planning Agent returned empty LLM content."
-        )
+        raise ValueError("Evidence Planning Agent returned empty LLM content.")
 
     parsed = parse_or_repair_agent_response(
         raw_output=content,
-        expected_schema=EVIDENCE_PLAN_SCHEMA,
+        expected_schema=EVIDENCE_GAP_SCHEMA,
         agent_name=agent_name,
     )
 
-    raw_tests = parsed.get("tests", [])
+    capped = select_capped_gaps(parsed.get("gaps", []), hypothesis_set)
 
-    # ------------------------------------------------------
-    # Step 1: filter out items missing required fields
-    # ------------------------------------------------------
-
-    REQUIRED_TEST_FIELDS = ("hypothesis_id", "objective", "capability")
-
-    valid_raw_tests = []
-
-    for i, item in enumerate(raw_tests):
-        missing_fields = [
-            field for field in REQUIRED_TEST_FIELDS
-            if field not in item or not item[field]
-        ]
-
-        if missing_fields:
-            print(
-                f"⚠ evidence_planning_agent test #{i + 1} is missing "
-                f"required field(s) {missing_fields} — skipping it: "
-                f"{item}"
-            )
-            continue
-
-        valid_raw_tests.append(item)
-
-    raw_tests = valid_raw_tests
-
-    # ------------------------------------------------------
-    # Step 2: normalize hypothesis_id and group by hypothesis
-    # ------------------------------------------------------
-
-    raw_tests_by_hypothesis: Dict[str, List[Dict[str, Any]]] = {}
-
-    for item in raw_tests:
-        try:
-            normalized_id = normalize_hypothesis_id(
-                returned_id=item["hypothesis_id"],
-                hypothesis_set=hypothesis_set,
-            )
-        except ValueError:
-            print(
-                f"⚠ evidence_planning_agent test has unresolvable "
-                f"hypothesis_id '{item['hypothesis_id']}' — skipping it"
-            )
-            continue
-
-        item["hypothesis_id"] = normalized_id
-        raw_tests_by_hypothesis.setdefault(normalized_id, []).append(item)
-
-    # ------------------------------------------------------
-    # Step 3: deterministic cap — max N tests per hypothesis,
-    # kept by priority. Backstop against the model ignoring
-    # rule 8/18, which it has done multiple times.
-    # ------------------------------------------------------
-
-    MAX_TESTS_PER_HYPOTHESIS = 2
-
-    def _priority(item: Dict[str, Any]) -> int:
-        try:
-            return int(item.get("priority", 1))
-        except (TypeError, ValueError):
-            return 1
-
-    capped_raw_tests = []
-
-    for hyp_id, items in raw_tests_by_hypothesis.items():
-        sorted_items = sorted(items, key=_priority)
-        capped_raw_tests.extend(sorted_items[:MAX_TESTS_PER_HYPOTHESIS])
-
-        if len(sorted_items) > MAX_TESTS_PER_HYPOTHESIS:
-            print(
-                f"⚠ evidence_planning_agent requested "
-                f"{len(sorted_items)} tests for hypothesis "
-                f"'{hyp_id}' — capping to "
-                f"{MAX_TESTS_PER_HYPOTHESIS} by priority"
-            )
-
-    raw_tests = capped_raw_tests
-
-    if not raw_tests:
+    if not capped:
         raise ValueError(
-            "Evidence Planning Agent: no valid tests remained after "
+            "Evidence Planning Agent: no valid gaps remained after "
             "filtering malformed items."
         )
 
-    # ------------------------------------------------------
-    # Step 4: build EvidenceTest objects
-    # ------------------------------------------------------
-
-    tests = []
-
-    for index, item in enumerate(raw_tests, start=1):
-        test = EvidenceTest(
-            test_id=f"{incident_frame.incident_id}-r{round_number}-test-{index}",
+    gaps = []
+    for item in capped:
+        gap = EvidenceGap(
             hypothesis_id=item["hypothesis_id"],
-            objective=item["objective"],
-            capability=item["capability"],
-            parameters=item.get("parameters", {}),
-            expected_supporting_observations=item.get(
-                "expected_supporting_observations", []
-            ),
-            expected_falsifying_observations=item.get(
-                "expected_falsifying_observations", []
-            ),
-            priority=int(item.get("priority", 1)),
+            gap_description=item["gap_description"],
+            suggested_capability=item["suggested_capability"],
+            priority=_priority(item),
         )
+        gap.validate()
+        gaps.append(gap)
 
-        test.validate()
-        tests.append(test)
-
-    evidence_plan = EvidencePlan(
-        incident_id=incident_frame.incident_id,
-        tests=tests,
-    )
-
-    evidence_plan.validate()
-
-    return evidence_plan
+    gap_selection = EvidenceGapSelection(incident_id=incident_frame.incident_id, gaps=gaps)
+    gap_selection.validate()
+    return gap_selection

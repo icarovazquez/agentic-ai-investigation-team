@@ -17,6 +17,7 @@ from . import capabilities  # noqa: F401 -- import triggers capability registrat
 from .adapters.base import load_investigation_evidence_executor
 from .agents.evidence_analyst import check_evidence_analysis_leakage, evidence_analyst_agent, EvidenceAnalysis
 from .agents.evidence_planner import evidence_planning_agent
+from .agents.evidence_test_creator import evidence_test_creation_agent
 from .agents.hypothesis_challenger import ChallengeReport, hypothesis_challenger_agent
 from .agents.hypothesis_generator import HypothesisSet, hypothesis_generator_agent
 from .agents.incident_framing import IncidentFrame, incident_framing_agent
@@ -208,16 +209,42 @@ def run_investigation(
     for round_number in range(1, max_iterations + 1):
 
         # ------------------------------------------------------
-        # Stage 3: Plan evidence tests
+        # Stage 3a: Select evidence gaps
         # ------------------------------------------------------
 
         try:
-            evidence_plan = evidence_planning_agent(
+            evidence_gap_selection = evidence_planning_agent(
                 incident_frame=incident_frame,
                 hypothesis_set=hypothesis_set,
-                round_number=round_number,
                 prior_evidence_analysis=evidence_analysis,  # None on round 1
                 prior_challenge_report=challenge_report,    # None on round 1
+            )
+            evidence_gap_selection.validate()
+
+        except Exception as exc:
+            return InvestigationRunResult(
+                investigation_id=investigation_id,
+                status=InvestigationStatus.IN_PROGRESS,
+                evidence_graph_summary=evidence_graph.summary(),
+                incident_frame=incident_frame,
+                hypothesis_set=hypothesis_set,
+                evidence_results=evidence_results,
+                failed_stage=f"evidence_gap_selection_round_{round_number}",
+                error=str(exc),
+            )
+
+        print(f"✓ Round {round_number}: {len(evidence_gap_selection.gaps)} evidence gaps selected")
+
+        # ------------------------------------------------------
+        # Stage 3b: Construct evidence tests from the selected gaps
+        # ------------------------------------------------------
+
+        try:
+            evidence_plan = evidence_test_creation_agent(
+                incident_frame=incident_frame,
+                hypothesis_set=hypothesis_set,
+                evidence_gap_selection=evidence_gap_selection,
+                round_number=round_number,
             )
             evidence_plan.validate()
 
@@ -229,11 +256,11 @@ def run_investigation(
                 incident_frame=incident_frame,
                 hypothesis_set=hypothesis_set,
                 evidence_results=evidence_results,
-                failed_stage=f"evidence_planning_round_{round_number}",
+                failed_stage=f"evidence_test_creation_round_{round_number}",
                 error=str(exc),
             )
 
-        print(f"✓ Round {round_number}: {len(evidence_plan.tests)} evidence tests planned")
+        print(f"✓ Round {round_number}: {len(evidence_plan.tests)} evidence tests created")
 
         # ------------------------------------------------------
         # Stage 4: Execute evidence tests (deterministic)

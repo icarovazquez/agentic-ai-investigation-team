@@ -33,6 +33,7 @@ AGENT_MODEL_MAP = {
     "incident_framing_agent": DEFAULT_AGENT_MODEL,
     "hypothesis_generator_agent": DEFAULT_AGENT_MODEL,
     "evidence_planning_agent": DEFAULT_AGENT_MODEL,
+    "evidence_test_creation_agent": DEFAULT_AGENT_MODEL,
     "evidence_analyst_agent": DEFAULT_AGENT_MODEL,
     "hypothesis_challenger_agent": DEFAULT_AGENT_MODEL,
     "root_cause_remediation_agent": DEFAULT_AGENT_MODEL,
@@ -46,7 +47,8 @@ AGENT_MODEL_MAP = {
 AGENT_MAX_TOKENS = {
     "incident_framing_agent": 2500,
     "hypothesis_generator_agent": 2000,
-    "evidence_planning_agent": 8000,
+    "evidence_planning_agent": 2500,       # output is now a short gap list
+    "evidence_test_creation_agent": 5000,  # detailed but structurally capped at 8 items
     "evidence_analyst_agent": 2500,
     "hypothesis_challenger_agent": 2500,
     "root_cause_remediation_agent": 2500,
@@ -89,7 +91,14 @@ def trim_messages(messages, max_chars=12000):
 
 
 @observe(name="llm_call", as_type='generation')
-   def llm_call(agent_name: str, messages: list, temperature: float = 1.0, tools: list = None, max_tokens: Optional[int] = None) -> dict:    """
+def llm_call(
+    agent_name: str,
+    messages: list,
+    temperature: float = 1.0,
+    tools: list = None,
+    max_tokens: Optional[int] = None,
+) -> dict:
+    """
     Observability wrapper that all agents use when calling the LLM.
     Logs model, input, output, and token usage to Langfuse.
     """
@@ -97,7 +106,7 @@ def trim_messages(messages, max_chars=12000):
     selected_model = AGENT_MODEL_MAP.get(agent_name, DEFAULT_AGENT_MODEL)
 
     if max_tokens is None:
-       max_tokens = AGENT_MAX_TOKENS.get(agent_name, 3000)
+        max_tokens = AGENT_MAX_TOKENS.get(agent_name, 3000)
 
     messages = trim_messages(messages, max_chars=12000)
 
