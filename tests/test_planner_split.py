@@ -126,3 +126,23 @@ def test_orchestrator_imports_and_wiring():
     assert "evidence_gap_selection_round_" in src
     assert "evidence_test_creation_round_" in src
     assert "round_number=round_number,\n                prior_evidence_analysis" not in src
+
+
+def test_resolve_capability_name():
+    from investigation_team.capabilities.registry import resolve_capability_name
+    assert resolve_capability_name("network_state") == "network_state"
+    assert resolve_capability_name("network_state, deep_diagnostics") == "network_state"
+    assert resolve_capability_name("reachability, deep_diagnostics") == "reachability"
+    assert resolve_capability_name("bogus") is None
+    assert resolve_capability_name(None) is None
+
+
+def test_planner_normalizes_and_drops_bad_capabilities():
+    raw = [gap("H1", cap="network_state, deep_diagnostics"), gap("H2", cap="bogus")]
+    out = select_capped_gaps(raw, make_hset())
+    assert [(g["hypothesis_id"], g["suggested_capability"]) for g in out] == [(f"{INC}-h1", "network_state")]
+
+
+def test_creator_falls_back_to_gap_capability(monkeypatch):
+    plan = _run_creator(monkeypatch, [{"capability": "net_state, nonsense"}, {"capability": "reachability, deep_diagnostics"}, {}])
+    assert [t.capability for t in plan.tests] == ["topology", "reachability", "network_state"]
