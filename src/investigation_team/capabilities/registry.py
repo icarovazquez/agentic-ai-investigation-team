@@ -15,10 +15,11 @@ keeping its own list.
 
 from __future__ import annotations
 
+import inspect
 import re
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -85,6 +86,74 @@ def resolve_capability_name(raw: str) -> Optional[str]:
         if token in CAPABILITY_REGISTRY:
             return token
     return None
+
+
+_NON_PARAMETER_ARGS = {"self", "evidence_graph"}
+
+
+def capability_parameter_specs() -> Dict[str, Dict[str, List[str]]]:
+    """
+    The parameters each capability's collect_evidence() actually
+    accepts, read from its signature so it can never drift from the
+    code. Shown to the test-creation agent and used to bind parameters.
+    """
+    specs: Dict[str, Dict[str, List[str]]] = {}
+    for name, reg in CAPABILITY_REGISTRY.items():
+        required: List[str] = []
+        optional: List[str] = []
+        sig = inspect.signature(reg.instance.collect_evidence)
+        for pname, param in sig.parameters.items():
+            if pname in _NON_PARAMETER_ARGS or param.kind in (
+                param.VAR_POSITIONAL, param.VAR_KEYWORD
+            ):
+                continue
+            (optional if param.default is not param.empty else required).append(pname)
+        specs[name] = {"required": required, "optional": optional}
+    return specs
+
+
+def bind_parameters(
+    capability_name: str,
+    proposed: Any,
+    suspected_entity_ids: List[str],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Deterministically turn model-proposed parameters into a call the
+    capability can actually execute: drop keys it doesn't accept
+    (models invent names like 'interfaces' or 'ping_source'), coerce
+    entity_ids to a list, and fill missing required entity arguments
+    from the hypothesis's suspected entities. Returns (parameters,
+    notes) where notes describe what was changed.
+    """
+    spec = capability_parameter_specs()[capability_name]
+    accepted = set(spec["required"]) | set(spec["optional"])
+    proposed = proposed if isinstance(proposed, dict) else {}
+    notes: List[str] = []
+
+    bound = {k: v for k, v in proposed.items() if k in accepted}
+    dropped = sorted(k for k in proposed if k not in accepted)
+    if dropped:
+        notes.append(f"dropped unsupported parameter(s) {dropped}")
+
+    if "entity_ids" in bound and isinstance(bound["entity_ids"], str):
+        bound["entity_ids"] = [bound["entity_ids"]]
+
+    entities = list(suspected_entity_ids)
+    for required in spec["required"]:
+        if bound.get(required):
+            continue
+        if required == "entity_ids" and entities:
+            bound[required] = entities
+        elif required == "source_entity_id" and entities:
+            bound[required] = entities[0]
+        elif required == "target_entity_id" and len(entities) > 1:
+            bound[required] = entities[1]
+        else:
+            notes.append(f"could not fill required parameter '{required}'")
+            continue
+        notes.append(f"filled '{required}' from the hypothesis's suspected entities")
+
+    return bound, notes
 
 
 def get_capability(name: str):

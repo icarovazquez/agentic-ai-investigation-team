@@ -26,6 +26,8 @@ def make_hset(n=5):
     ]
     hset = HypothesisSet.__new__(HypothesisSet)
     hset.incident_id = INC
+    for h in hs:
+        h.suspected_entity_ids = ["nika:simple_bgp:router1", "nika:simple_bgp:router2"]
     hset.hypotheses = hs
     return hset
 
@@ -96,12 +98,14 @@ def test_creator_uses_gap_hypothesis_id_and_position(monkeypatch):
     assert plan.tests[0].test_id == f"{INC}-r2-test-1"
 
 
-def test_creator_count_mismatch_truncates_and_defaults(monkeypatch):
+def test_creator_count_mismatch_extra_ignored_missing_built_from_gap(monkeypatch):
     plan = _run_creator(monkeypatch, [{"capability": "topology"}] * 5)
     assert len(plan.tests) == 3
     plan = _run_creator(monkeypatch, [{}])
-    assert len(plan.tests) == 1
+    assert len(plan.tests) == 3  # every gap gets a test
     assert plan.tests[0].objective == "gap A" and plan.tests[0].capability == "topology"
+    plan = _run_creator(monkeypatch, [])
+    assert [t.capability for t in plan.tests] == ["topology", "reachability", "network_state"]
 
 
 def test_planner_end_to_end_stubbed(monkeypatch):
