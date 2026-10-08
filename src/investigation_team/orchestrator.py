@@ -287,7 +287,12 @@ def run_investigation(
 
         evidence_results = evidence_results + round_results
 
+        failed_results = [r for r in round_results if r.status != "completed"]
         print(f"✓ Round {round_number}: {len(round_results)} evidence tests executed")
+        if failed_results:
+            print(f"⚠ Round {round_number}: {len(failed_results)} test(s) FAILED to execute:")
+            for r in failed_results:
+                print(f"    {r.test_id} [{r.capability}]: {r.error}")
 
         # ------------------------------------------------------
         # Stage 5: Analyze evidence against hypotheses

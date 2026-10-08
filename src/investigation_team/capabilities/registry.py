@@ -15,8 +15,10 @@ keeping its own list.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -66,6 +68,23 @@ def available_capability_names() -> List[str]:
 
 def capability_descriptions() -> Dict[str, str]:
     return {name: reg.description for name, reg in CAPABILITY_REGISTRY.items()}
+
+
+def resolve_capability_name(raw: str) -> Optional[str]:
+    """
+    Map a model-supplied capability string to a registered capability
+    name, or None. Models sometimes return a list-as-string such as
+    "network_state, deep_diagnostics"; the first registered name in it
+    wins. Enforced in code because the prompt already says "one of
+    available_capabilities" and was ignored.
+    """
+    if not isinstance(raw, str):
+        return None
+    tokens = [t for t in re.split(r"[^A-Za-z0-9_]+", raw) if t]
+    for token in tokens:
+        if token in CAPABILITY_REGISTRY:
+            return token
+    return None
 
 
 def get_capability(name: str):

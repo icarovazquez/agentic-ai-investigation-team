@@ -19,7 +19,11 @@ from typing import Any, Dict, List, Optional
 
 from langfuse import observe
 
-from ..capabilities.registry import available_capability_names, capability_descriptions
+from ..capabilities.registry import (
+    available_capability_names,
+    capability_descriptions,
+    resolve_capability_name,
+)
 from ..llm import llm_call, parse_or_repair_agent_response
 from .evidence_analyst import EvidenceAnalysis, normalize_hypothesis_id
 from .hypothesis_challenger import ChallengeReport
@@ -192,6 +196,14 @@ def select_capped_gaps(
                 f"hypothesis_id '{item['hypothesis_id']}' -- skipping it"
             )
             continue
+        capability = resolve_capability_name(item["suggested_capability"])
+        if capability is None:
+            print(
+                f"⚠ evidence_planning_agent gap has unknown capability "
+                f"'{item['suggested_capability']}' -- skipping it"
+            )
+            continue
+        item["suggested_capability"] = capability
         item["hypothesis_id"] = normalized_id
         by_hypothesis.setdefault(normalized_id, []).append(item)
 

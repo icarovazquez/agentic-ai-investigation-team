@@ -15,7 +15,11 @@ from typing import Any, Dict
 
 from langfuse import observe
 
-from ..capabilities.registry import available_capability_names, capability_descriptions
+from ..capabilities.registry import (
+    available_capability_names,
+    capability_descriptions,
+    resolve_capability_name,
+)
 from ..domain import EvidencePlan, EvidenceTest
 from ..llm import llm_call, parse_or_repair_agent_response
 from .evidence_planner import EvidenceGapSelection
@@ -176,11 +180,20 @@ Write exactly {expected_count} evidence tests, one per gap, in order.
                 "authoritative link between a gap and its test."
             )
 
+        capability = resolve_capability_name(item.get("capability", ""))
+        if capability is None:
+            print(
+                f"⚠ evidence_test_creation_agent test #{index} has unknown "
+                f"capability '{item.get('capability')}' -- using the gap's "
+                f"'{gap.suggested_capability}'"
+            )
+            capability = gap.suggested_capability
+
         test = EvidenceTest(
             test_id=f"{incident_frame.incident_id}-r{round_number}-test-{index}",
             hypothesis_id=gap.hypothesis_id,
             objective=item.get("objective", gap.gap_description),
-            capability=item.get("capability", gap.suggested_capability),
+            capability=capability,
             parameters=item.get("parameters", {}),
             expected_supporting_observations=item.get("expected_supporting_observations", []),
             expected_falsifying_observations=item.get("expected_falsifying_observations", []),
