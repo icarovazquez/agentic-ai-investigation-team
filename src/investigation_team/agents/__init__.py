@@ -21,6 +21,7 @@ from .evidence_analyst import (
     build_evidence_analysis_context,
     check_evidence_analysis_leakage,
     evidence_analyst_agent,
+    normalize_assessment_status,
     normalize_hypothesis_id,
 )
 from .evidence_planner import (
@@ -63,6 +64,7 @@ __all__ = [
     "build_evidence_analysis_context",
     "check_evidence_analysis_leakage",
     "evidence_analyst_agent",
+    "normalize_assessment_status",
     "normalize_hypothesis_id",
     "build_evidence_planning_context",
     "evidence_planning_agent",

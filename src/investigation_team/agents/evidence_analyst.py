@@ -89,6 +89,47 @@ class EvidenceAnalysis:
         }
 
 
+VALID_ASSESSMENT_STATUSES = {"supported", "weakened", "rejected", "proposed"}
+
+# Words models use when they mean "the evidence doesn't settle this".
+# The prompt already defines that as "proposed"; "unresolved" in
+# particular leaks in from the Challenger's outcome vocabulary.
+INSUFFICIENT_EVIDENCE_STATUS_SYNONYMS = {
+    "unresolved",
+    "inconclusive",
+    "insufficient",
+    "insufficient_evidence",
+    "undetermined",
+    "unknown",
+    "uncertain",
+}
+
+
+def normalize_assessment_status(returned_status: str) -> str:
+    """
+    Enforce the status contract in code instead of trusting the
+    prompt. Valid statuses pass through; synonyms for "evidence is
+    insufficient" map to "proposed" (with a warning); anything else
+    is a genuine contract violation and still raises.
+    """
+    status = str(returned_status).strip().lower()
+
+    if status in VALID_ASSESSMENT_STATUSES:
+        return status
+
+    if status in INSUFFICIENT_EVIDENCE_STATUS_SYNONYMS:
+        print(
+            f"⚠ evidence_analyst_agent returned status '{returned_status}' "
+            "-- treating as 'proposed' (insufficient evidence)"
+        )
+        return "proposed"
+
+    raise ValueError(
+        "Evidence Analyst returned invalid status: "
+        f"{returned_status}"
+    )
+
+
 def normalize_hypothesis_id(
     returned_id: str,
     hypothesis_set: HypothesisSet,
@@ -381,19 +422,13 @@ The dictionary must have exactly this shape:
         agent_name=agent_name,
     )
 
-    valid_statuses = {"supported", "weakened", "rejected", "proposed"}
-
     for item in parsed.get("assessments", []):
         item["hypothesis_id"] = normalize_hypothesis_id(
             returned_id=item["hypothesis_id"],
             hypothesis_set=hypothesis_set,
         )
 
-        if item["status"] not in valid_statuses:
-            raise ValueError(
-                "Evidence Analyst returned invalid status: "
-                f"{item['status']}"
-            )
+        item["status"] = normalize_assessment_status(item["status"])
 
     assessments = []
 
