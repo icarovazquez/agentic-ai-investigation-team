@@ -1,5 +1,5 @@
 """
-All six agents, re-exported from one place for convenience. Import
+All seven agents, re-exported from one place for convenience. Import
 order matters here: each file imports from the agent(s) before it in
 the chain (e.g. evidence_analyst.py imports HypothesisSet from
 hypothesis_generator.py), so importing them in chain order avoids any
@@ -23,7 +23,16 @@ from .evidence_analyst import (
     evidence_analyst_agent,
     normalize_hypothesis_id,
 )
-from .evidence_planner import build_evidence_planning_context, evidence_planning_agent
+from .evidence_planner import (
+    EvidenceGap,
+    EvidenceGapSelection,
+    build_evidence_planning_context,
+    evidence_planning_agent,
+)
+from .evidence_test_creator import (
+    build_evidence_test_creation_context,
+    evidence_test_creation_agent,
+)
 from .hypothesis_challenger import (
     ChallengeReport,
     HypothesisChallenge,
@@ -57,6 +66,10 @@ __all__ = [
     "normalize_hypothesis_id",
     "build_evidence_planning_context",
     "evidence_planning_agent",
+    "EvidenceGap",
+    "EvidenceGapSelection",
+    "build_evidence_test_creation_context",
+    "evidence_test_creation_agent",
     "ChallengeReport",
     "HypothesisChallenge",
     "build_challenger_context",
