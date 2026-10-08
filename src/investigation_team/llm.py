@@ -46,7 +46,7 @@ AGENT_MODEL_MAP = {
 # accidental.
 AGENT_MAX_TOKENS = {
     "incident_framing_agent": 2500,
-    "hypothesis_generator_agent": 2000,
+    "hypothesis_generator_agent": 4000,  # was 2000; verbose 3-4 hypothesis outputs were truncated mid-JSON
     "evidence_planning_agent": 2500,       # output is now a short gap list
     "evidence_test_creation_agent": 5000,  # detailed but structurally capped at 8 items
     "evidence_analyst_agent": 2500,
