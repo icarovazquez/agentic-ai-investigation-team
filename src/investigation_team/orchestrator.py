@@ -18,7 +18,7 @@ from .adapters.base import load_investigation_evidence_executor
 from .agents.evidence_analyst import check_evidence_analysis_leakage, evidence_analyst_agent, EvidenceAnalysis
 from .agents.evidence_planner import evidence_planning_agent
 from .agents.evidence_test_creator import evidence_test_creation_agent
-from .agents.hypothesis_challenger import ChallengeReport, hypothesis_challenger_agent
+from .agents.hypothesis_challenger import ChallengeReport, describe_challenge_outcome, hypothesis_challenger_agent
 from .agents.hypothesis_generator import HypothesisSet, hypothesis_generator_agent
 from .agents.incident_framing import IncidentFrame, incident_framing_agent
 from .agents.root_cause_remediation import RootCauseRecommendation, root_cause_remediation_agent, select_leading_hypothesis
@@ -389,7 +389,17 @@ def run_investigation(
 
         print(f"✓ Round {round_number}: hypothesis challenge complete")
         for c in challenge_report.challenges:
-            print(f"    {c.hypothesis_id}: {c.challenge_outcome}")
+            print(f"    {c.hypothesis_id}: {describe_challenge_outcome(c)}")
+            if c.challenge_outcome == "disputed":
+                print(f"        rebuttal   : {c.rebuttal[:400]}")
+                if c.alternative_explanation:
+                    print(f"        alternative: {c.alternative_explanation[:300]}")
+                print(
+                    f"        to resolve : {c.distinguishing_observation} "
+                    f"(via {c.distinguishing_capability})"
+                )
+            elif c.downgrade_note:
+                print(f"        {c.downgrade_note}")
         if challenge_report.systemic_concerns:
             print(f"    ⚠ {len(challenge_report.systemic_concerns)} systemic concern(s) raised")
 
@@ -406,6 +416,10 @@ def run_investigation(
             )
 
             if leading_challenge is not None and leading_challenge.challenge_outcome == "upheld":
+                if leading_challenge.downgrade_note:
+                    open_concerns = residual_concerns(
+                        challenge_report, leading_assessment.hypothesis_id
+                    )
                 break
 
         converged_id = check_convergence(

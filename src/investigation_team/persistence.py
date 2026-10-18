@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .agents.hypothesis_challenger import describe_challenge_outcome
 from .config import NetworkInvestigationConfig
 from .orchestrator import InvestigationRunResult
 
@@ -56,7 +57,7 @@ def print_run_summary(run_result: InvestigationRunResult) -> None:
     if run_result.challenge_report:
         print("Final challenge_report:")
         for c in run_result.challenge_report.challenges:
-            print(f"    {c.hypothesis_id}: {c.challenge_outcome}")
+            print(f"    {c.hypothesis_id}: {describe_challenge_outcome(c)}")
         print()
 
     print("Rounds seen in evidence_results (by test_id prefix):")
@@ -74,11 +75,15 @@ def print_run_summary(run_result: InvestigationRunResult) -> None:
     if run_result.root_cause_recommendation:
         rec = run_result.root_cause_recommendation
         print(f"Root cause recommendation: {rec.hypothesis_id} (confidence={rec.confidence})")
-        print(f"Status: {rec.status}")
+        print(f"Diagnosis: {rec.status}")
 
     if getattr(run_result, "convergence_note", None):
         print()
         print(run_result.convergence_note)
+
+    if getattr(run_result, "residual_concerns", None):
+        print()
+        print("Open concerns at completion:")
         for concern in run_result.residual_concerns:
             print(f"  - {concern[:300]}")
 
