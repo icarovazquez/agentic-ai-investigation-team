@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from langfuse import observe
 
+from ..capabilities.registry import capability_descriptions, resolve_capability_name
 from ..llm import llm_call, parse_or_repair_agent_response
 from .evidence_analyst import EvidenceAnalysis, HypothesisAssessment
 from .hypothesis_generator import HypothesisSet
@@ -24,6 +25,8 @@ CHALLENGE_REPORT_SCHEMA = """
             "challenge_outcome": str,
             "rebuttal": str,
             "alternative_explanation": str | None,
+            "distinguishing_capability": str | None,
+            "distinguishing_observation": str | None,
             "additional_evidence_needed": list[str]
         }
     ],
@@ -51,6 +54,16 @@ class HypothesisChallenge:
 
     alternative_explanation: Optional[str] = None
     additional_evidence_needed: List[str] = field(default_factory=list)
+
+    # A dispute must say which registered capability could produce the
+    # observation that separates the two explanations. Code, not the
+    # prompt, enforces this (see enforce_dispute_actionability).
+    distinguishing_capability: Optional[str] = None
+    distinguishing_observation: Optional[str] = None
+
+    # Set when a dispute was downgraded to "upheld" because nothing the
+    # investigation can collect would resolve it.
+    downgrade_note: Optional[str] = None
 
     def validate(self) -> None:
         if not self.hypothesis_id.strip():
@@ -101,6 +114,80 @@ class ChallengeReport:
             "challenges": [c.to_dict() for c in self.challenges],
             "systemic_concerns": list(self.systemic_concerns),
         }
+
+
+def enforce_dispute_actionability(
+    challenges: List[HypothesisChallenge],
+) -> List[str]:
+    """
+    A dispute only keeps the loop running if another round could
+    resolve it. That requires the Challenger to name (a) a registered
+    capability that can measure the distinguishing observation and
+    (b) the observation itself. Otherwise another round cannot help:
+    the dispute is downgraded to "upheld" and kept as a recorded
+    concern (downgrade_note) instead of a blocking objection.
+
+    Mutates the challenges in place and returns human-readable notes
+    for the run log. This is code on purpose: asking the Challenger
+    to police its own requests is the same self-policing that failed
+    elsewhere in the pipeline.
+    """
+
+    notes: List[str] = []
+
+    for challenge in challenges:
+        if challenge.challenge_outcome != "disputed":
+            continue
+
+        capability = resolve_capability_name(
+            challenge.distinguishing_capability or ""
+        )
+        observation = (challenge.distinguishing_observation or "").strip()
+
+        if capability is not None and observation:
+            challenge.distinguishing_capability = capability
+            continue
+
+        if capability is None:
+            reason = (
+                "no available capability was named that could produce "
+                "the distinguishing observation"
+            )
+        else:
+            reason = "no distinguishing observation was specified"
+
+        challenge.challenge_outcome = "upheld"
+        challenge.downgrade_note = (
+            f"Dispute downgraded to upheld: {reason}, so another "
+            "evidence round could not resolve it."
+        )
+        notes.append(f"{challenge.hypothesis_id}: {challenge.downgrade_note}")
+
+    return notes
+
+
+def describe_challenge_outcome(challenge: HypothesisChallenge) -> str:
+    """
+    Reader-facing label. "upheld" means the Challenger accepted the
+    Analyst's assessment, which for a rejected hypothesis means the
+    rejection stands, so say that instead of a bare "upheld".
+    """
+
+    if challenge.challenge_outcome != "upheld":
+        return challenge.challenge_outcome
+
+    stands = {
+        "supported": "support stands",
+        "rejected": "rejection stands",
+        "weakened": "weakening stands",
+    }.get(challenge.original_status)
+
+    label = "upheld"
+    if stands:
+        label += f" ({stands})"
+    if challenge.downgrade_note:
+        label += " [dispute downgraded]"
+    return label
 
 
 def rank_hypothesis_assessments(
@@ -224,10 +311,20 @@ For the leading_assessment and runner_up_assessment supplied:
    - "disputed": the counter-argument names a specific alternative
      explanation that the evidence in hand is EQUALLY consistent
      with, so the conclusion is not yet safe. You must be able to
-     name the observation that would tell the two apart.
+     name the observation that would tell the two apart AND the
+     available capability (from the list below) that could collect
+     it. If no available capability could produce that observation,
+     another evidence round cannot help: use "upheld" and put the
+     observation in additional_evidence_needed instead.
+     A more specific or less specific form of the SAME cause (for
+     example transient versus permanent forms of the same fault)
+     refines the hypothesis; it is not a rival explanation.
    - "unresolved": the evidence is too thin to argue either way.
 3. If you dispute an assessment, name that specific alternative
-   explanation.
+   explanation, plus distinguishing_capability (exactly one name from
+   the available capabilities) and distinguishing_observation (what
+   that capability would measure). For upheld or unresolved
+   challenges set both to null.
 4. List any additional evidence that would resolve the dispute. If
    you upheld the assessment, list only evidence that would further
    strengthen it (it need not be collected).
@@ -255,6 +352,8 @@ Return ONLY a Python dictionary with exactly this shape:
             "challenge_outcome": str,
             "rebuttal": str,
             "alternative_explanation": str | None,
+            "distinguishing_capability": str | None,
+            "distinguishing_observation": str | None,
             "additional_evidence_needed": list[str]
         }
     ],
@@ -264,6 +363,15 @@ Return ONLY a Python dictionary with exactly this shape:
 challenge_outcome must be exactly one of: "upheld", "disputed",
 "unresolved".
 """
+
+    capability_catalog = "\n".join(
+        f"- {name}: {description}"
+        for name, description in capability_descriptions().items()
+    )
+    system_prompt += (
+        "\nAvailable capabilities (the ONLY evidence this investigation "
+        "can collect):\n" + capability_catalog + "\n"
+    )
 
     user_prompt = f"""
 Investigation context:
@@ -310,6 +418,8 @@ Challenge the leading hypothesis assessment(s).
             additional_evidence_needed=item.get(
                 "additional_evidence_needed", []
             ),
+            distinguishing_capability=item.get("distinguishing_capability"),
+            distinguishing_observation=item.get("distinguishing_observation"),
         )
         challenges.append(challenge)
 
@@ -327,6 +437,9 @@ Challenge the leading hypothesis assessment(s).
             challenge.original_confidence = source.confidence
 
         challenge.validate()
+
+    for note in enforce_dispute_actionability(challenges):
+        print(f"    ℹ {note}")
 
     report = ChallengeReport(
         incident_id=incident_frame.incident_id,

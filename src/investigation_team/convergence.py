@@ -69,8 +69,11 @@ def residual_concerns(
         return []
     concerns: List[str] = []
     for c in challenge_report.challenges:
-        if c.hypothesis_id == leader_id and c.challenge_outcome != "upheld":
-            concerns.append(f"Challenger ({c.challenge_outcome}): {c.rebuttal}")
+        if c.hypothesis_id != leader_id:
+            continue
+        if c.challenge_outcome != "upheld" or c.downgrade_note:
+            label = "downgraded dispute" if c.downgrade_note else c.challenge_outcome
+            concerns.append(f"Challenger ({label}): {c.rebuttal}")
             concerns.extend(f"Evidence that would resolve it: {e}" for e in c.additional_evidence_needed)
     concerns.extend(f"Systemic: {s}" for s in challenge_report.systemic_concerns)
     return concerns

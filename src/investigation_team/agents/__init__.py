@@ -36,6 +36,8 @@ from .evidence_test_creator import (
 )
 from .hypothesis_challenger import (
     ChallengeReport,
+    describe_challenge_outcome,
+    enforce_dispute_actionability,
     HypothesisChallenge,
     build_challenger_context,
     hypothesis_challenger_agent,
@@ -73,6 +75,8 @@ __all__ = [
     "build_evidence_test_creation_context",
     "evidence_test_creation_agent",
     "ChallengeReport",
+    "describe_challenge_outcome",
+    "enforce_dispute_actionability",
     "HypothesisChallenge",
     "build_challenger_context",
     "hypothesis_challenger_agent",

@@ -14,12 +14,95 @@ logic lives here instead, free to depend on everything below it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .agents.hypothesis_challenger import rank_hypothesis_assessments
 from .config import EvaluationConfig
 from .orchestrator import InvestigationRunResult
+
+
+# ------------------------------------------------------------
+# Fault-type matching
+#
+# Ground truth is an identifier ("link_failure", "link_down"); the
+# Hypothesis Generator words the same fault differently from run to
+# run ("Physical Layer Link Failure", "interface down", ...). Plain
+# substring matching on the identifier therefore scored identical
+# diagnoses differently between runs. Phrases are normalized
+# (case, underscores, hyphens) and a ground-truth label that belongs
+# to a known fault group matches any phrase in that group.
+#
+# Phrases are deliberately specific to the fault ("physical layer
+# failure", not "physical layer"), because hypotheses often mention
+# the same words while ruling the fault out ("regardless of physical
+# layer status", "the physical link remains operational").
+# ------------------------------------------------------------
+
+FAULT_SYNONYM_GROUPS: List[Dict[str, List[str]]] = [
+    {
+        "labels": [
+            "link failure",
+            "link down",
+            "link outage",
+            "link fault",
+            "physical link failure",
+        ],
+        "phrases": [
+            "link failure",
+            "link down",
+            "link outage",
+            "link fault",
+            "physical link failure",
+            "physical layer failure",
+            "physical layer fault",
+            "physical layer link",
+            "physical layer outage",
+            "interface down",
+            "interfaces down",
+            "cable disconnect",
+            "cable failure",
+            "cable fault",
+            "transceiver failure",
+            "port failure",
+            "hardware port",
+            "signal loss",
+            "fiber cut",
+        ],
+    },
+]
+
+
+def normalize_label(text: str) -> str:
+    """Lowercase; underscores and hyphens become spaces; collapse spaces."""
+    return re.sub(r"\s+", " ", re.sub(r"[_\-]+", " ", (text or "").lower())).strip()
+
+
+def fault_match_phrases(*ground_truth_labels: str) -> List[str]:
+    """Phrases that count as describing the ground-truth fault."""
+    phrases: List[str] = []
+    for raw in ground_truth_labels:
+        label = normalize_label(raw)
+        if not label:
+            continue
+        phrases.append(label)
+        for group in FAULT_SYNONYM_GROUPS:
+            if label in group["labels"]:
+                phrases.extend(group["phrases"])
+    return list(dict.fromkeys(phrases))
+
+
+def hypothesis_text_matches_fault(
+    hypothesis_text: str,
+    ground_truth_fault_type: Optional[str],
+    ground_truth_root_cause: Optional[str],
+) -> bool:
+    haystack = normalize_label(hypothesis_text)
+    phrases = fault_match_phrases(
+        ground_truth_fault_type or "", ground_truth_root_cause or ""
+    )
+    return any(phrase in haystack for phrase in phrases)
 
 
 @dataclass
@@ -126,23 +209,19 @@ def compute_evaluation(
 
     # --- top_1 / top_3 root_cause_accuracy: keyword-match heuristic ---
 
-    fault_type = (evaluation_config.ground_truth_fault_type or "").lower().replace("_", " ")
-    root_cause_text = (evaluation_config.ground_truth_root_cause or "").lower()
-
     def hypothesis_matches_ground_truth(assessment_hypothesis_id: str) -> bool:
         hypothesis = hypotheses_by_id.get(assessment_hypothesis_id)
         if hypothesis is None:
             return False
 
-        haystack = " ".join([
-            hypothesis.title,
-            hypothesis.proposed_cause,
-            hypothesis.causal_mechanism,
-        ]).lower()
-
-        return (
-            (fault_type and fault_type in haystack)
-            or (root_cause_text and root_cause_text in haystack)
+        return hypothesis_text_matches_fault(
+            " ".join([
+                hypothesis.title,
+                hypothesis.proposed_cause,
+                hypothesis.causal_mechanism,
+            ]),
+            evaluation_config.ground_truth_fault_type,
+            evaluation_config.ground_truth_root_cause,
         )
 
     top_1_match = hypothesis_matches_ground_truth(recommendation.hypothesis_id)
@@ -155,8 +234,9 @@ def compute_evaluation(
     top_3_match = any(hypothesis_matches_ground_truth(hid) for hid in top_3_ids)
 
     notes = [
-        "top_1/top_3_root_cause_accuracy are keyword-match heuristics "
-        "against free-text ground truth, not exact verification.",
+        "top_1/top_3_root_cause_accuracy are keyword/synonym-match "
+        "heuristics against the ground-truth fault label, not exact "
+        "verification.",
     ]
 
     if not ground_truth_ids:
