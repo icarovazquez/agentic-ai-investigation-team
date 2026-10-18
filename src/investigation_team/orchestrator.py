@@ -201,6 +201,7 @@ def run_investigation(
     max_iterations = policy.maximum_reasoning_iterations
 
     evidence_plan = None
+    all_tests = []  # every test from every round, for the analyst
     evidence_results: List[EvidenceTestResult] = []
     evidence_analysis = None
     challenge_report = None
@@ -260,6 +261,7 @@ def run_investigation(
                 error=str(exc),
             )
 
+        all_tests.extend(evidence_plan.tests)
         print(f"✓ Round {round_number}: {len(evidence_plan.tests)} evidence tests created")
 
         # ------------------------------------------------------
@@ -302,7 +304,7 @@ def run_investigation(
             evidence_analysis = evidence_analyst_agent(
                 incident_frame=incident_frame,
                 hypothesis_set=hypothesis_set,
-                evidence_plan=evidence_plan,
+                evidence_plan=EvidencePlan(incident_id=incident_frame.incident_id, tests=list(all_tests)),
                 evidence_results=evidence_results,  # cumulative across rounds
             )
             evidence_analysis.validate()

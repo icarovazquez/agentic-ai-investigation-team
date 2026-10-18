@@ -57,7 +57,15 @@ AGENT_MAX_TOKENS = {
 LLM_USAGE: List[Dict[str, Any]] = []
 
 
-def trim_messages(messages, max_chars=12000):
+# Generous on purpose. The old 12,000-character cap silently kept only
+# the TAIL of an oversized message and dropped earlier messages -- i.e.
+# the system prompt and the start of the evidence -- once cumulative
+# multi-round evidence outgrew it. Modern models take far more; this is
+# a runaway guard, not a budget, and it warns when it ever trims.
+MAX_PROMPT_CHARS = 80000
+
+
+def trim_messages(messages, max_chars=MAX_PROMPT_CHARS):
 
     trimmed = []
     total_chars = 0
@@ -73,10 +81,15 @@ def trim_messages(messages, max_chars=12000):
         remaining = max_chars - total_chars
 
         if remaining <= 0:
+            print("⚠ trim_messages: dropping earlier message(s) -- prompt budget exhausted")
             break
 
         # trim oversized message if needed
         if len(content) > remaining:
+            print(
+                f"⚠ trim_messages: a {len(content)}-character message exceeds "
+                f"the remaining {remaining}-character budget -- keeping only its tail"
+            )
             content = content[-remaining:]
 
         trimmed.append({
@@ -108,7 +121,7 @@ def llm_call(
     if max_tokens is None:
         max_tokens = AGENT_MAX_TOKENS.get(agent_name, 3000)
 
-    messages = trim_messages(messages, max_chars=12000)
+    messages = trim_messages(messages)
 
     call_kwargs = {
         "model": selected_model,

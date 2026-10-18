@@ -243,6 +243,16 @@ def build_evidence_analysis_context(
             "tests": [],
         }
 
+    # Observations and events are facts about the network, not about
+    # any one hypothesis. They go into ONE shared, de-duplicated pool
+    # that every hypothesis is assessed against; each test only
+    # references the ids it returned. (Previously a test's evidence was
+    # shown only to the hypothesis it was written for, so e.g. an
+    # "interface is down" observation fetched for one hypothesis was
+    # invisible to the hypothesis it actually proves.)
+    shared_observations: Dict[str, Any] = {}
+    shared_events: Dict[str, Any] = {}
+
     for result in evidence_results:
 
         if result.hypothesis_id not in evidence_by_hypothesis:
@@ -256,29 +266,24 @@ def build_evidence_analysis_context(
             "capability": result.capability,
             "execution_status": result.status,
             "evidence_status": result.evidence.get("evidence_status"),
-            "observations": [],
+            "observation_ids": [],
+            "event_ids": [],
         }
 
-        # --------------------------------------------
-        # Capability-agnostic evidence extraction
-        # --------------------------------------------
-        # Every capability returns its payload under "<name>_evidence"
-        # (reachability_evidence, network_state_evidence,
-        # deep_diagnostics_evidence, vendor_alert_evidence, ...). Read
-        # observations/events from whichever of those the result has,
-        # so a newly registered capability reaches the analyst with no
-        # change here. (A hardcoded per-capability branch used to live
-        # here and silently dropped deep_diagnostics and vendor_alert
-        # evidence entirely.)
-
-        events = []
+        # Capability-agnostic: every capability returns its payload
+        # under "<name>_evidence" (reachability_evidence,
+        # network_state_evidence, deep_diagnostics_evidence,
+        # vendor_alert_evidence, ...), so a newly registered capability
+        # reaches the analyst with no change here.
         for key, payload in result.evidence.items():
             if not key.endswith("_evidence") or not isinstance(payload, dict):
                 continue
-            compact_result["observations"].extend(payload.get("observations", []))
-            events.extend(payload.get("events", []))
-        if events:
-            compact_result["events"] = events
+            for obs in payload.get("observations", []):
+                shared_observations.setdefault(obs["observation_id"], obs)
+                compact_result["observation_ids"].append(obs["observation_id"])
+            for event in payload.get("events", []):
+                shared_events.setdefault(event["event_id"], event)
+                compact_result["event_ids"].append(event["event_id"])
 
         if result.capability == "reachability":
             path = result.evidence.get("path_evidence", {})
@@ -291,7 +296,11 @@ def build_evidence_analysis_context(
             compact_result
         )
 
-    return {"hypotheses": evidence_by_hypothesis}
+    return {
+        "shared_observations": list(shared_observations.values()),
+        "shared_events": list(shared_events.values()),
+        "hypotheses": evidence_by_hypothesis,
+    }
 
 
 @observe(name="evidence_analyst_agent")
@@ -331,7 +340,12 @@ You are NOT the Root Cause Agent.
 
 For each hypothesis independently:
 
-1. Review ONLY the tests listed under that hypothesis.
+1. Assess the hypothesis against ALL of shared_observations and
+   shared_events. Observations are facts about the network, not
+   about any one hypothesis: an observation collected by a test
+   written for a different hypothesis still counts if it bears on
+   this one. The tests listed under a hypothesis only show what was
+   asked on its behalf (via observation_ids / event_ids).
 2. Identify observations that support the hypothesis.
 3. Identify observations that contradict the hypothesis.
 4. Identify important evidence that remains unavailable.
@@ -346,7 +360,7 @@ hypothesis materially.
 
 Critical rules:
 
-- Never use evidence belonging to another hypothesis.
+- Only observations and events actually present in shared_observations / shared_events are evidence.
 - Never invent observations.
 - A successful test execution is not evidence by itself.
 - "insufficient_evidence" means missing evidence.
@@ -366,8 +380,12 @@ Critical rules:
 - Do NOT use words such as "confirmed" or "root cause".
 - Do NOT generate new hypotheses.
 - Do NOT reference other hypotheses by ID (e.g. "H2") or compare
-  one hypothesis's plausibility against another's — assess each
-  hypothesis strictly against its own evidence in isolation.
+  one hypothesis's plausibility against another's. Judge each
+  hypothesis on whether the shared evidence is consistent with it,
+  not on how it ranks against the others.
+- A symptom is not a cause: evidence that something is down (e.g. a
+  routing session) supports a hypothesis only if the hypothesis
+  explains it, not merely if the hypothesis predicts it.
 - Use only the supplied evidence.
 - Confidence must be between 0.0 and 1.0.
 
