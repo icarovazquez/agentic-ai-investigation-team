@@ -58,11 +58,16 @@ class ReachabilityCapability:
             }
 
         # Operational reachability evidence.
+        path_entity_ids = set(path_evidence.get("shortest_path") or [])
+        for alternative in path_evidence.get("all_paths") or []:
+            path_entity_ids.update(alternative)
+
         reachability_evidence = (
             reachability_evidence_executor(
                 evidence_graph=evidence_graph,
                 source_entity_id=source_entity_id,
                 target_entity_id=target_entity_id,
+                path_entity_ids=sorted(path_entity_ids),
             )
         )
 

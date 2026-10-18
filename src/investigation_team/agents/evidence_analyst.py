@@ -278,6 +278,8 @@ def build_evidence_analysis_context(
         for key, payload in result.evidence.items():
             if not key.endswith("_evidence") or not isinstance(payload, dict):
                 continue
+            if payload.get("match_by_observation_id"):
+                compact_result["observation_match"] = payload["match_by_observation_id"]
             for obs in payload.get("observations", []):
                 shared_observations.setdefault(obs["observation_id"], obs)
                 compact_result["observation_ids"].append(obs["observation_id"])
@@ -365,6 +367,12 @@ Critical rules:
 - A successful test execution is not evidence by itself.
 - "insufficient_evidence" means missing evidence.
 - A structural topology path does not prove operational reachability.
+- Reachability observations labelled "path_segment" in a test's
+  observation_match are measurements between two other points on the
+  path between the pair that was tested. They do not prove end-to-end
+  reachability, but they can localize where along the path traffic
+  stops: a failing segment explains a failing end-to-end path, and
+  working segments elsewhere on the path rule those parts out.
 - Successful reachability may falsify a hypothesis asserting that
   same segment is unreachable.
 - confidence represents how likely this hypothesis is to be the
