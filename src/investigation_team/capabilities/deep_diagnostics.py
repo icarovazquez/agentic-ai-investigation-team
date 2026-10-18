@@ -18,6 +18,7 @@ from .registry import register_capability
         "cannot distinguish between competing causes (e.g. "
         "physical failure vs. protocol-driven state changes)."
     ),
+    observables=("bgp_session_state", "interface_error_count", "interface_admin_status"),
 )
 class DeepDiagnosticsCapability:
     """

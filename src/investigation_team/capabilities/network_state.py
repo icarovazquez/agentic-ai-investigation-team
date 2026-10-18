@@ -14,6 +14,7 @@ from .registry import register_capability
         "device availability, routing adjacency state, and "
         "route presence when available."
     ),
+    observables=("interface_oper_status",),
 )
 class NetworkStateCapability:
     """

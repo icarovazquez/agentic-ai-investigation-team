@@ -27,12 +27,17 @@ class CapabilityRegistration:
     name: str
     description: str
     instance: Any  # the capability object, exposing collect_evidence(...)
+    # Metric / event names this capability can actually return. Agents
+    # asking for "more evidence" must pick from these, so a request for
+    # something no capability produces (optical power, history) is
+    # recognisable in code.
+    observables: Tuple[str, ...] = ()
 
 
 CAPABILITY_REGISTRY: Dict[str, CapabilityRegistration] = {}
 
 
-def register_capability(name: str, description: str):
+def register_capability(name: str, description: str, observables: Tuple[str, ...] = ()):
     """
     Class decorator: registers a capability under `name`, with the
     description agents use to know it exists and when to reach for it.
@@ -57,6 +62,7 @@ def register_capability(name: str, description: str):
             name=name,
             description=description,
             instance=cls(),
+            observables=tuple(observables),
         )
         return cls
 
@@ -65,6 +71,10 @@ def register_capability(name: str, description: str):
 
 def available_capability_names() -> List[str]:
     return list(CAPABILITY_REGISTRY.keys())
+
+
+def capability_observables() -> Dict[str, Tuple[str, ...]]:
+    return {name: reg.observables for name, reg in CAPABILITY_REGISTRY.items()}
 
 
 def capability_descriptions() -> Dict[str, str]:

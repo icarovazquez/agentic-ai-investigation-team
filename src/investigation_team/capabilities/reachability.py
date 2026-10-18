@@ -13,6 +13,7 @@ from .registry import register_capability
         "Provides end-to-end or hop-level reachability "
         "evidence such as ping, loss, latency, or path tests."
     ),
+    observables=("ping_success",),
 )
 class ReachabilityCapability:
     """

@@ -396,7 +396,7 @@ def run_investigation(
                     print(f"        alternative: {c.alternative_explanation[:300]}")
                 print(
                     f"        to resolve : {c.distinguishing_observation} "
-                    f"(via {c.distinguishing_capability})"
+                    f"(via {c.distinguishing_capability}: {c.distinguishing_observable})"
                 )
             elif c.downgrade_note:
                 print(f"        {c.downgrade_note}")

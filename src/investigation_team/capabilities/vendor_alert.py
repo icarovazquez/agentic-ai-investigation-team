@@ -16,6 +16,7 @@ from .registry import register_capability
         "the underlying root cause — treat as symptom-level "
         "evidence, same as any other observation."
     ),
+    observables=("vendor_alert_event",),
 )
 class VendorAlertCapability:
     """
