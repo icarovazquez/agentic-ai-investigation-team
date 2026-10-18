@@ -17,7 +17,9 @@ from langfuse import observe
 
 from ..capabilities.registry import (
     available_capability_names,
+    bind_parameters,
     capability_descriptions,
+    capability_parameter_specs,
     resolve_capability_name,
 )
 from ..domain import EvidencePlan, EvidenceTest
@@ -62,6 +64,7 @@ def build_evidence_test_creation_context(
         ],
         "available_capabilities": available_capability_names(),
         "capability_descriptions": capability_descriptions(),
+        "capability_parameters": capability_parameter_specs(),
     }
 
 
@@ -100,20 +103,12 @@ Important rules:
    capability (still from available_capabilities) if the suggested
    one is clearly wrong for that gap.
 4. Do NOT decide whether a hypothesis is correct.
-5. Parameters must contain only values the chosen capability needs.
+5. Parameters must use ONLY the parameter names listed for the
+   chosen capability in capability_parameters. Any other parameter
+   name will be discarded. Entity IDs must come from the supplied
+   context.
 6. Use only entity IDs present in the supplied context.
 7. Do not invent capability names.
-
-For topology and reachability tests, parameters may include:
-{{
-    "source_entity_id": str,
-    "target_entity_id": str
-}}
-
-For network_state tests, parameters may include:
-{{
-    "entity_ids": list[str]
-}}
 
 Return ONLY a Python dictionary with exactly this shape:
 
@@ -165,12 +160,26 @@ Write exactly {expected_count} evidence tests, one per gap, in order.
     if len(raw_tests) != expected_count:
         print(
             f"⚠ evidence_test_creation_agent returned {len(raw_tests)} "
-            f"tests for {expected_count} gaps -- matching by position "
-            "up to the shorter length."
+            f"tests for {expected_count} gaps -- matching by position; "
+            "any gap without a test gets one built from the gap itself."
         )
 
+    hypotheses_by_id = {h.hypothesis_id: h for h in hypothesis_set.hypotheses}
+
     tests = []
-    for index, (gap, item) in enumerate(zip(evidence_gap_selection.gaps, raw_tests), start=1):
+    for index, gap in enumerate(evidence_gap_selection.gaps, start=1):
+        # Gap-driven, not model-driven: every gap gets a test. If the
+        # model returned fewer items, the missing ones are built
+        # deterministically from the gap itself.
+        if index <= len(raw_tests) and isinstance(raw_tests[index - 1], dict):
+            item = raw_tests[index - 1]
+        else:
+            print(
+                f"⚠ evidence_test_creation_agent returned no test for gap "
+                f"#{index} -- building one directly from the gap."
+            )
+            item = {}
+
         if item.get("hypothesis_id") and item["hypothesis_id"] != gap.hypothesis_id:
             print(
                 f"⚠ evidence_test_creation_agent test #{index}'s "
@@ -182,19 +191,29 @@ Write exactly {expected_count} evidence tests, one per gap, in order.
 
         capability = resolve_capability_name(item.get("capability", ""))
         if capability is None:
-            print(
-                f"⚠ evidence_test_creation_agent test #{index} has unknown "
-                f"capability '{item.get('capability')}' -- using the gap's "
-                f"'{gap.suggested_capability}'"
-            )
+            if item.get("capability"):
+                print(
+                    f"⚠ evidence_test_creation_agent test #{index} has unknown "
+                    f"capability '{item.get('capability')}' -- using the gap's "
+                    f"'{gap.suggested_capability}'"
+                )
             capability = gap.suggested_capability
+
+        hypothesis = hypotheses_by_id.get(gap.hypothesis_id)
+        parameters, notes = bind_parameters(
+            capability,
+            item.get("parameters", {}),
+            hypothesis.suspected_entity_ids if hypothesis else [],
+        )
+        for note in notes:
+            print(f"ℹ evidence_test_creation_agent test #{index} [{capability}]: {note}")
 
         test = EvidenceTest(
             test_id=f"{incident_frame.incident_id}-r{round_number}-test-{index}",
             hypothesis_id=gap.hypothesis_id,
             objective=item.get("objective", gap.gap_description),
             capability=capability,
-            parameters=item.get("parameters", {}),
+            parameters=parameters,
             expected_supporting_observations=item.get("expected_supporting_observations", []),
             expected_falsifying_observations=item.get("expected_falsifying_observations", []),
             priority=gap.priority,
