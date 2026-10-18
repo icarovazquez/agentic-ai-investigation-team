@@ -198,11 +198,27 @@ def select_capped_gaps(
             continue
         capability = resolve_capability_name(item["suggested_capability"])
         if capability is None:
-            print(
-                f"⚠ evidence_planning_agent gap has unknown capability "
-                f"'{item['suggested_capability']}' -- skipping it"
+            # The model sometimes puts prose in this field (a description
+            # of the check instead of a capability name). The gap itself
+            # is still valuable, so recover instead of dropping it: fall
+            # back to the hypothesis's own required_capabilities, then to
+            # the generic entity-state capability. suggested_capability is
+            # only a default; the test creator may override it.
+            hypothesis = next(
+                (h for h in hypothesis_set.hypotheses if h.hypothesis_id == normalized_id),
+                None,
             )
-            continue
+            for candidate in (hypothesis.required_capabilities if hypothesis else []):
+                capability = resolve_capability_name(candidate)
+                if capability:
+                    break
+            if capability is None:
+                capability = "network_state" if "network_state" in available_capability_names() else available_capability_names()[0]
+            print(
+                f"⚠ evidence_planning_agent gap has non-capability "
+                f"suggested_capability '{str(item['suggested_capability'])[:60]}' "
+                f"-- using '{capability}' instead"
+            )
         item["suggested_capability"] = capability
         item["hypothesis_id"] = normalized_id
         by_hypothesis.setdefault(normalized_id, []).append(item)
