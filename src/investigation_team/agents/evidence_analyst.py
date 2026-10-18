@@ -260,27 +260,29 @@ def build_evidence_analysis_context(
         }
 
         # --------------------------------------------
-        # Reachability evidence
+        # Capability-agnostic evidence extraction
         # --------------------------------------------
+        # Every capability returns its payload under "<name>_evidence"
+        # (reachability_evidence, network_state_evidence,
+        # deep_diagnostics_evidence, vendor_alert_evidence, ...). Read
+        # observations/events from whichever of those the result has,
+        # so a newly registered capability reaches the analyst with no
+        # change here. (A hardcoded per-capability branch used to live
+        # here and silently dropped deep_diagnostics and vendor_alert
+        # evidence entirely.)
+
+        events = []
+        for key, payload in result.evidence.items():
+            if not key.endswith("_evidence") or not isinstance(payload, dict):
+                continue
+            compact_result["observations"].extend(payload.get("observations", []))
+            events.extend(payload.get("events", []))
+        if events:
+            compact_result["events"] = events
 
         if result.capability == "reachability":
-            reachability = result.evidence.get("reachability_evidence", {})
-            compact_result["observations"] = reachability.get("observations", [])
-
             path = result.evidence.get("path_evidence", {})
             compact_result["structural_path"] = path.get("shortest_path")
-
-        # --------------------------------------------
-        # Network-state evidence
-        # --------------------------------------------
-
-        elif result.capability == "network_state":
-            network_state = result.evidence.get("network_state_evidence", {})
-            compact_result["observations"] = network_state.get("observations", [])
-
-        # --------------------------------------------
-        # Topology evidence
-        # --------------------------------------------
 
         elif result.capability == "topology":
             compact_result["topology_evidence"] = result.evidence
