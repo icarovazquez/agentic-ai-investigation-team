@@ -153,6 +153,11 @@ class InvestigationPolicy:
     minimum_diagnosis_confidence: float = 0.80
 
     maximum_reasoning_iterations: int = 5
+    # Stop early once the same hypothesis has been the supported leader
+    # (above the confidence bar, with no credible rival) for this many
+    # consecutive rounds, even if the Challenger keeps objecting. The
+    # open objections are recorded as residual concerns. 0 disables.
+    convergence_stable_rounds: int = 2
     maximum_hypotheses: int = 5
     maximum_tests_per_hypothesis: int = 5
 
@@ -170,6 +175,11 @@ class InvestigationPolicy:
         if self.maximum_reasoning_iterations < 1:
             raise ValueError(
                 "maximum_reasoning_iterations must be at least 1."
+            )
+
+        if self.convergence_stable_rounds < 0:
+            raise ValueError(
+                "convergence_stable_rounds must be 0 (disabled) or more."
             )
 
         if self.maximum_hypotheses < 2:

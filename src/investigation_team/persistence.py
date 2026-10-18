@@ -76,6 +76,12 @@ def print_run_summary(run_result: InvestigationRunResult) -> None:
         print(f"Root cause recommendation: {rec.hypothesis_id} (confidence={rec.confidence})")
         print(f"Status: {rec.status}")
 
+    if getattr(run_result, "convergence_note", None):
+        print()
+        print(run_result.convergence_note)
+        for concern in run_result.residual_concerns:
+            print(f"  - {concern[:300]}")
+
 
 # ============================================================
 # EFFICIENCY METRICS

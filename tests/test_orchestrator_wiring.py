@@ -62,3 +62,41 @@ def test_test_creation_failure_stage(patched, monkeypatch):
     r = orch.run_investigation(_config())
     assert r.failed_stage == "evidence_test_creation_round_1"
     assert seen["round_number"] == 1 and seen["evidence_gap_selection"] is sel
+
+
+def test_loop_stops_on_convergence_and_records_residual_concerns(monkeypatch):
+    """Challenger disputes every round; the same supported leader holds -> stop after round 2."""
+    from types import SimpleNamespace as NS
+    from investigation_team.agents.evidence_analyst import EvidenceAnalysis, HypothesisAssessment
+    from investigation_team.agents.hypothesis_challenger import ChallengeReport, HypothesisChallenge
+    from investigation_team.domain import EvidencePlan, EvidenceTest, HypothesisStatus as S
+
+    monkeypatch.setattr(orch, "incident_framing_agent", lambda **kw: F())
+    monkeypatch.setattr(orch, "hypothesis_generator_agent", lambda **kw: HS())
+    monkeypatch.setattr(orch, "evidence_planning_agent",
+                        lambda **kw: EvidenceGapSelection("inc", [EvidenceGap("h1", "d", "topology")]))
+    rounds = {"n": 0}
+    def create(**kw):
+        rounds["n"] += 1
+        return EvidencePlan(incident_id="inc", tests=[EvidenceTest(
+            test_id=f"inc-r{kw['round_number']}-test-1", hypothesis_id="h1", objective="o", capability="topology")])
+    monkeypatch.setattr(orch, "evidence_test_creation_agent", create)
+    monkeypatch.setattr(orch, "execute_evidence_plan", lambda **kw: [])
+    analysis = EvidenceAnalysis(incident_id="inc", assessments=[
+        HypothesisAssessment(hypothesis_id="h1", status=S.SUPPORTED, confidence=0.92, rationale="r"),
+        HypothesisAssessment(hypothesis_id="h2", status=S.REJECTED, confidence=0.05, rationale="r")])
+    monkeypatch.setattr(orch, "evidence_analyst_agent", lambda **kw: analysis)
+    report = ChallengeReport(incident_id="inc", challenges=[HypothesisChallenge(
+        hypothesis_id="h1", original_status="supported", original_confidence=0.92, challenge_outcome="disputed",
+        rebuttal="no optical readings", alternative_explanation="x", additional_evidence_needed=["optical power"])],
+        systemic_concerns=["s"])
+    monkeypatch.setattr(orch, "hypothesis_challenger_agent", lambda **kw: report)
+    rec = NS(status="root_cause_identified", hypothesis_id="h1", confidence=0.92, remediation_steps=[], validate=lambda: None,
+             to_dict=lambda: {})
+    monkeypatch.setattr(orch, "root_cause_remediation_agent", lambda **kw: rec)
+
+    r = orch.run_investigation(_config())
+    assert rounds["n"] == 2, "should stop after 2 stable rounds, not run all 5"
+    assert "Converged in round 2" in r.convergence_note
+    assert any("no optical readings" in c for c in r.residual_concerns)
+    assert r.status.value == "remediation_recommended"
