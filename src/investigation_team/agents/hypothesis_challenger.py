@@ -214,13 +214,23 @@ For the leading_assessment and runner_up_assessment supplied:
 
 1. Identify the strongest counter-argument the evidence allows,
    even if you believe the original assessment is likely correct.
-2. State whether the original assessment is "upheld" (you found no
-   genuine counter-argument), "disputed" (you found a real
-   weakness), or "unresolved" (evidence is too thin to argue either
-   way).
-3. If you dispute an assessment, name a specific alternative
-   explanation the evidence would also be consistent with.
-4. List any additional evidence that would resolve the dispute.
+2. Then judge whether the assessment SURVIVES that counter-argument:
+   - "upheld": the strongest counter-argument does not change the
+     conclusion. The evidence already in hand is more consistent
+     with the assessment than with the counter-argument. Missing
+     evidence alone is NOT a reason to dispute: every investigation
+     has missing evidence. Use "upheld" when you would still act on
+     the assessment after considering your own objection.
+   - "disputed": the counter-argument names a specific alternative
+     explanation that the evidence in hand is EQUALLY consistent
+     with, so the conclusion is not yet safe. You must be able to
+     name the observation that would tell the two apart.
+   - "unresolved": the evidence is too thin to argue either way.
+3. If you dispute an assessment, name that specific alternative
+   explanation.
+4. List any additional evidence that would resolve the dispute. If
+   you upheld the assessment, list only evidence that would further
+   strengthen it (it need not be collected).
 
 Also assess systemic_concerns across the whole investigation, such
 as: was only one hypothesis meaningfully tested; did evidence

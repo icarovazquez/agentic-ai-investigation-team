@@ -28,6 +28,7 @@ from .capabilities.reachability import ReachabilityCapability
 from .capabilities.topology import TopologyCapability
 from .capabilities.vendor_alert import VendorAlertCapability
 from .config import NetworkInvestigationConfig
+from .convergence import check_convergence, residual_concerns
 from .domain import EvidencePlan, EvidenceTestResult, InvestigationStatus
 from .evidence_graph import EvidenceGraph
 from .executors import execute_evidence_plan
@@ -57,6 +58,12 @@ class InvestigationRunResult:
 
     failed_stage: Optional[str] = None
     error: Optional[str] = None
+
+    # Set when the loop stopped because the same leader held for several
+    # rounds, not because the Challenger upheld it. The objections that
+    # were still open at that point are kept here, not discarded.
+    convergence_note: Optional[str] = None
+    residual_concerns: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -92,6 +99,8 @@ class InvestigationRunResult:
             ),
             "failed_stage": self.failed_stage,
             "error": self.error,
+            "convergence_note": self.convergence_note,
+            "residual_concerns": self.residual_concerns,
         }
 
 
@@ -202,6 +211,9 @@ def run_investigation(
 
     evidence_plan = None
     all_tests = []  # every test from every round, for the analyst
+    analysis_history = []
+    convergence_note = None
+    open_concerns = []
     evidence_results: List[EvidenceTestResult] = []
     evidence_analysis = None
     challenge_report = None
@@ -322,6 +334,7 @@ def run_investigation(
                 error=str(exc),
             )
 
+        analysis_history.append(evidence_analysis)
         print(f"✓ Round {round_number}: evidence analysis complete")
         for a in evidence_analysis.assessments:
             print(f"    {a.hypothesis_id}: {a.status.value} (confidence={a.confidence})")
@@ -394,6 +407,22 @@ def run_investigation(
 
             if leading_challenge is not None and leading_challenge.challenge_outcome == "upheld":
                 break
+
+        converged_id = check_convergence(
+            analysis_history,
+            minimum_confidence=policy.minimum_diagnosis_confidence,
+            stable_rounds=policy.convergence_stable_rounds,
+        )
+        if converged_id is not None:
+            open_concerns = residual_concerns(challenge_report, converged_id)
+            convergence_note = (
+                f"Converged in round {round_number}: {converged_id} was the supported "
+                f"leader for {policy.convergence_stable_rounds} consecutive rounds with no "
+                f"credible rival. {len(open_concerns)} objection(s) remained open "
+                "and are listed in residual_concerns."
+            )
+            print(f"✓ Round {round_number}: {convergence_note}")
+            break
 
         if round_number < max_iterations:
             print(f"⚠ Round {round_number}: leading hypothesis not confirmed — planning another round")
@@ -472,4 +501,6 @@ def run_investigation(
         evidence_analysis=evidence_analysis,
         challenge_report=challenge_report,
         root_cause_recommendation=root_cause_recommendation,
+        convergence_note=convergence_note,
+        residual_concerns=open_concerns,
     )
