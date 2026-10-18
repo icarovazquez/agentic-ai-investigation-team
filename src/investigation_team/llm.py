@@ -49,9 +49,9 @@ AGENT_MAX_TOKENS = {
     "hypothesis_generator_agent": 4000,  # was 2000; verbose 3-4 hypothesis outputs were truncated mid-JSON
     "evidence_planning_agent": 2500,       # output is now a short gap list
     "evidence_test_creation_agent": 5000,  # detailed but structurally capped at 8 items
-    "evidence_analyst_agent": 2500,
-    "hypothesis_challenger_agent": 2500,
-    "root_cause_remediation_agent": 2500,
+    "evidence_analyst_agent": 5000,  # cites shared evidence per hypothesis; 2500 truncated mid-JSON
+    "hypothesis_challenger_agent": 3500,
+    "root_cause_remediation_agent": 3500,
 }
 
 LLM_USAGE: List[Dict[str, Any]] = []
@@ -63,6 +63,15 @@ LLM_USAGE: List[Dict[str, Any]] = []
 # multi-round evidence outgrew it. Modern models take far more; this is
 # a runaway guard, not a budget, and it warns when it ever trims.
 MAX_PROMPT_CHARS = 80000
+
+
+MAX_TRUNCATION_RETRIES = 1
+MAX_RETRY_OUTPUT_TOKENS = 16000
+
+
+def _was_truncated(response) -> bool:
+    reason = getattr(response.choices[0], "finish_reason", None)
+    return str(reason).lower() in {"length", "max_tokens"}
 
 
 def trim_messages(messages, max_chars=MAX_PROMPT_CHARS):
@@ -134,6 +143,27 @@ def llm_call(
         call_kwargs["tools"] = tools
 
     response = Client.chat.completions.create(**call_kwargs)
+
+    # Output cut off by the token limit looks like "malformed JSON" to
+    # the parser (and the repair call has the same limit, so it fails
+    # the same way). Detect it here, where the cause is still visible,
+    # and retry once with a larger budget instead.
+    for _ in range(MAX_TRUNCATION_RETRIES):
+        if not _was_truncated(response):
+            break
+        larger = min(call_kwargs["max_tokens"] * 2, MAX_RETRY_OUTPUT_TOKENS)
+        if larger <= call_kwargs["max_tokens"]:
+            break
+        print(
+            f"⚠ {agent_name} output hit the {call_kwargs['max_tokens']}-token "
+            f"limit -- retrying once with {larger}"
+        )
+        call_kwargs["max_tokens"] = larger
+        response = Client.chat.completions.create(**call_kwargs)
+
+    if _was_truncated(response):
+        print(f"⚠ {agent_name} output was still truncated at {call_kwargs['max_tokens']} tokens")
+
     content = response.choices[0].message.content
 
     usage = getattr(response, "usage", None)
@@ -147,6 +177,7 @@ def llm_call(
         "model": selected_model,
         "temperature": temperature,
         "content": content,
+        "truncated": _was_truncated(response),
         "usage": {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
