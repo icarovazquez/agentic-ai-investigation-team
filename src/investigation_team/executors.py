@@ -114,23 +114,35 @@ def reachability_evidence_executor(
     evidence_graph: EvidenceGraph,
     source_entity_id: str,
     target_entity_id: str,
+    path_entity_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Retrieve normalized reachability observations between two entities.
+    Retrieve normalized reachability observations relevant to a
+    source -> target question.
 
-    Expected future metrics may include:
-      - ping_success
-      - packet_loss
-      - latency_ms
-      - traceroute_hop_count
+    Two kinds of observation are returned, each labelled in
+    `match_by_observation_id`:
+
+      "exact"         -- a measurement from source to target.
+      "path_segment"  -- a measurement between two entities that BOTH
+                         lie on a path between source and target (e.g.
+                         router1 -> router2 when asked about pc1 -> pc2).
+                         It does not prove end-to-end reachability, but
+                         it localizes a fault on the path -- exactly the
+                         evidence an investigator reaches for when the
+                         end-to-end test was never run.
+
+    Requiring an exact pair used to hide the decisive segment
+    measurement behind "insufficient evidence".
+
+    Expected metrics may include: ping_success, packet_loss,
+    latency_ms, traceroute_hop_count.
 
     The executor does not perform live network commands. It queries
     evidence already normalized into the Evidence Graph.
     """
 
-    source_observations = evidence_graph.get_observations(
-        entity_ids=[source_entity_id]
-    )
+    on_path = set(path_entity_ids or []) | {source_entity_id, target_entity_id}
 
     reachability_metrics = {
         "ping_success",
@@ -140,26 +152,34 @@ def reachability_evidence_executor(
     }
 
     matching_observations = []
+    match_by_observation_id: Dict[str, str] = {}
 
-    for observation in source_observations:
+    for observation in evidence_graph.get_observations(entity_ids=sorted(on_path)):
 
         if observation.metric_name not in reachability_metrics:
             continue
 
-        observed_target = observation.dimensions.get(
-            "target_entity_id"
-        )
+        observed_target = observation.dimensions.get("target_entity_id")
 
-        if observed_target == target_entity_id:
-            matching_observations.append(
-                observation.to_dict()
-            )
+        if (
+            observation.entity_id == source_entity_id
+            and observed_target == target_entity_id
+        ):
+            match = "exact"
+        elif observation.entity_id in on_path and observed_target in on_path:
+            match = "path_segment"
+        else:
+            continue
+
+        matching_observations.append(observation.to_dict())
+        match_by_observation_id[observation.observation_id] = match
 
     return {
         "executor": "reachability_evidence_executor",
         "source_entity_id": source_entity_id,
         "target_entity_id": target_entity_id,
         "observations": matching_observations,
+        "match_by_observation_id": match_by_observation_id,
         "observation_count": len(
             matching_observations
         ),
