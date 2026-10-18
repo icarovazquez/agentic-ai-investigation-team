@@ -141,10 +141,20 @@ def test_resolve_capability_name():
     assert resolve_capability_name(None) is None
 
 
-def test_planner_normalizes_and_drops_bad_capabilities():
-    raw = [gap("H1", cap="network_state, deep_diagnostics"), gap("H2", cap="bogus")]
-    out = select_capped_gaps(raw, make_hset())
-    assert [(g["hypothesis_id"], g["suggested_capability"]) for g in out] == [(f"{INC}-h1", "network_state")]
+def test_planner_normalizes_and_recovers_bad_capabilities():
+    hset = make_hset()
+    hset.hypotheses[1].required_capabilities = ["bogus", "reachability"]
+    raw = [
+        gap("H1", cap="network_state, deep_diagnostics"),
+        gap("H2", cap="Query RIB to confirm presence of any route"),  # prose, not a capability
+        gap("H3", cap="Verify BGP session"),                          # no hint -> generic default
+    ]
+    out = select_capped_gaps(raw, hset)
+    assert [(g["hypothesis_id"], g["suggested_capability"]) for g in out] == [
+        (f"{INC}-h1", "network_state"),
+        (f"{INC}-h2", "reachability"),
+        (f"{INC}-h3", "network_state"),
+    ]
 
 
 def test_creator_falls_back_to_gap_capability(monkeypatch):
