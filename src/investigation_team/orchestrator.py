@@ -34,6 +34,24 @@ from .evidence_graph import EvidenceGraph
 from .executors import execute_evidence_plan
 
 
+def describe_exception(exc: BaseException) -> str:
+    """
+    The exception and its causes, outermost first. Loaders wrap failures
+    ("Required evidence source failed: X") and the wrapped message is the
+    one that says what went wrong, so a bare str(exc) hides the answer.
+    """
+
+    parts = []
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current) or type(current).__name__
+        parts.append(f"{type(current).__name__}: {text}" if parts else text)
+        current = current.__cause__ or current.__context__
+    return " <- caused by ".join(parts)
+
+
 @dataclass
 class InvestigationRunResult:
     """
@@ -142,7 +160,7 @@ def run_investigation(
             status=InvestigationStatus.CREATED,
             evidence_graph_summary=evidence_graph.summary(),
             failed_stage="load_evidence",
-            error=str(exc),
+            error=describe_exception(exc),
         )
 
     print(f"✓ Evidence loaded: {evidence_graph.summary()}")
@@ -171,7 +189,7 @@ def run_investigation(
             status=InvestigationStatus.IN_PROGRESS,
             evidence_graph_summary=evidence_graph.summary(),
             failed_stage="incident_framing",
-            error=str(exc),
+            error=describe_exception(exc),
         )
 
     print(f"✓ Incident framed: {incident_frame.investigation_question}")
@@ -195,7 +213,7 @@ def run_investigation(
             evidence_graph_summary=evidence_graph.summary(),
             incident_frame=incident_frame,
             failed_stage="hypothesis_generation",
-            error=str(exc),
+            error=describe_exception(exc),
         )
 
     print(f"✓ {len(hypothesis_set.hypotheses)} hypotheses generated")
@@ -243,7 +261,7 @@ def run_investigation(
                 hypothesis_set=hypothesis_set,
                 evidence_results=evidence_results,
                 failed_stage=f"evidence_gap_selection_round_{round_number}",
-                error=str(exc),
+                error=describe_exception(exc),
             )
 
         print(f"✓ Round {round_number}: {len(evidence_gap_selection.gaps)} evidence gaps selected")
@@ -270,7 +288,7 @@ def run_investigation(
                 hypothesis_set=hypothesis_set,
                 evidence_results=evidence_results,
                 failed_stage=f"evidence_test_creation_round_{round_number}",
-                error=str(exc),
+                error=describe_exception(exc),
             )
 
         all_tests.extend(evidence_plan.tests)
@@ -296,7 +314,7 @@ def run_investigation(
                 evidence_plan=evidence_plan,
                 evidence_results=evidence_results,
                 failed_stage=f"evidence_execution_round_{round_number}",
-                error=str(exc),
+                error=describe_exception(exc),
             )
 
         evidence_results = evidence_results + round_results
@@ -331,7 +349,7 @@ def run_investigation(
                 evidence_plan=evidence_plan,
                 evidence_results=evidence_results,
                 failed_stage=f"evidence_analysis_round_{round_number}",
-                error=str(exc),
+                error=describe_exception(exc),
             )
 
         analysis_history.append(evidence_analysis)
@@ -384,7 +402,7 @@ def run_investigation(
                 evidence_results=evidence_results,
                 evidence_analysis=evidence_analysis,
                 failed_stage=f"hypothesis_challenge_round_{round_number}",
-                error=str(exc),
+                error=describe_exception(exc),
             )
 
         print(f"✓ Round {round_number}: hypothesis challenge complete")
@@ -487,7 +505,7 @@ def run_investigation(
             evidence_analysis=evidence_analysis,
             challenge_report=challenge_report,
             failed_stage="root_cause_remediation",
-            error=str(exc),
+            error=describe_exception(exc),
         )
 
     if root_cause_recommendation.status == "insufficient_evidence":

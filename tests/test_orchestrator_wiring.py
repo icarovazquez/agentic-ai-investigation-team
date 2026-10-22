@@ -100,3 +100,16 @@ def test_loop_stops_on_convergence_and_records_residual_concerns(monkeypatch):
     assert "Converged in round 2" in r.convergence_note
     assert any("no optical readings" in c for c in r.residual_concerns)
     assert r.status.value == "remediation_recommended"
+
+
+def test_load_failure_reports_the_underlying_cause(monkeypatch):
+    def boom(**kw):
+        try:
+            raise KeyError("No adapter registered as 'NIKAQoSContentionAdapter'")
+        except KeyError as inner:
+            raise RuntimeError("Required evidence source failed: topo") from inner
+    monkeypatch.setattr(orch, "load_investigation_evidence_executor", boom)
+    r = orch.run_investigation(_config())
+    assert r.failed_stage == "load_evidence"
+    assert "Required evidence source failed: topo" in r.error
+    assert "No adapter registered as 'NIKAQoSContentionAdapter'" in r.error
