@@ -10,7 +10,17 @@ capability added later but never explicitly imported would silently
 never register.
 """
 
-from . import call_quality, deep_diagnostics, network_state, reachability, topology, vendor_alert
+from . import (
+    call_quality,
+    change_history,
+    deep_diagnostics,
+    network_state,
+    reachability,
+    service_desk,
+    topology,
+    traffic,
+    vendor_alert,
+)
 from .registry import (
     CAPABILITY_REGISTRY,
     available_capability_names,

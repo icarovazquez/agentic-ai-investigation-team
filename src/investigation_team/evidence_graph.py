@@ -472,6 +472,31 @@ class EvidenceGraph:
             key=lambda record: record.observed_at,
         )
 
+    def get_changes(
+        self,
+        entity_ids: Optional[List[str]] = None,
+        change_types: Optional[List[str]] = None,
+    ) -> List[ChangeRecord]:
+        results = list(self._changes.values())
+
+        if entity_ids is not None:
+            entity_id_set = set(entity_ids)
+            results = [
+                record
+                for record in results
+                if entity_id_set & set(record.entity_ids)
+            ]
+
+        if change_types is not None:
+            change_type_set = set(change_types)
+            results = [
+                record
+                for record in results
+                if record.change_type in change_type_set
+            ]
+
+        return sorted(results, key=lambda record: record.changed_at)
+
     def get_events(
         self,
         entity_ids: Optional[List[str]] = None,

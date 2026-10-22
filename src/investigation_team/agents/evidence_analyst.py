@@ -252,6 +252,7 @@ def build_evidence_analysis_context(
     # invisible to the hypothesis it actually proves.)
     shared_observations: Dict[str, Any] = {}
     shared_events: Dict[str, Any] = {}
+    shared_changes: Dict[str, Any] = {}
 
     for result in evidence_results:
 
@@ -268,6 +269,7 @@ def build_evidence_analysis_context(
             "evidence_status": result.evidence.get("evidence_status"),
             "observation_ids": [],
             "event_ids": [],
+            "change_ids": [],
         }
 
         # Capability-agnostic: every capability returns its payload
@@ -286,6 +288,9 @@ def build_evidence_analysis_context(
             for event in payload.get("events", []):
                 shared_events.setdefault(event["event_id"], event)
                 compact_result["event_ids"].append(event["event_id"])
+            for change in payload.get("changes", []):
+                shared_changes.setdefault(change["change_id"], change)
+                compact_result["change_ids"].append(change["change_id"])
 
         if result.capability == "reachability":
             path = result.evidence.get("path_evidence", {})
@@ -301,6 +306,7 @@ def build_evidence_analysis_context(
     return {
         "shared_observations": list(shared_observations.values()),
         "shared_events": list(shared_events.values()),
+        "shared_changes": list(shared_changes.values()),
         "hypotheses": evidence_by_hypothesis,
     }
 
@@ -342,8 +348,8 @@ You are NOT the Root Cause Agent.
 
 For each hypothesis independently:
 
-1. Assess the hypothesis against ALL of shared_observations and
-   shared_events. Observations are facts about the network, not
+1. Assess the hypothesis against ALL of shared_observations,
+   shared_events and shared_changes. Observations are facts about the network, not
    about any one hypothesis: an observation collected by a test
    written for a different hypothesis still counts if it bears on
    this one. The tests listed under a hypothesis only show what was
@@ -362,7 +368,7 @@ hypothesis materially.
 
 Critical rules:
 
-- Only observations and events actually present in shared_observations / shared_events are evidence.
+- Only observations, events and changes actually present in shared_observations / shared_events / shared_changes are evidence.
 - Never invent observations.
 - A successful test execution is not evidence by itself.
 - "insufficient_evidence" means missing evidence.
