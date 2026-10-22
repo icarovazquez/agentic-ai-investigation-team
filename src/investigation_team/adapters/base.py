@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..config import EvidenceSourceConfig, NetworkInvestigationConfig
+from ..entity_resolution import EntityResolver, Resolution
 from ..domain import ChangeRecord, EventRecord, NetworkEntity, NetworkRelationship, ObservationRecord
 from ..evidence_graph import EvidenceGraph
 
@@ -90,6 +91,12 @@ class EvidenceAdapter(ABC):
         self.source_config = source_config
         self.source_config.validate()
 
+        # Set by load_evidence_source_executor from the entities already
+        # in the graph, so sources loaded after the topology resolve
+        # identifiers through one shared table. None when an adapter is
+        # used on its own (e.g. in a unit test that never builds a graph).
+        self.entity_resolver: Optional[EntityResolver] = None
+
     @property
     def source_id(self) -> str:
         return self.source_config.source_id
@@ -106,6 +113,41 @@ class EvidenceAdapter(ABC):
             events, and changes.
         """
         raise NotImplementedError
+
+    def resolve_entity(
+        self,
+        raw: str,
+        result: EvidenceAdapterResult,
+        *,
+        context: str = "",
+    ) -> Optional[str]:
+        """
+        Resolve a source-specific identifier to a canonical entity id.
+
+        An identifier that does not resolve (or resolves to several
+        entities) is NOT guessed at: it is recorded on the result as a
+        warning, naming the source and the identifier, and None is
+        returned so the caller skips that record. The loader prints
+        these warnings, so a naming mismatch cannot pass silently.
+        """
+
+        if self.entity_resolver is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__} needs an entity resolver; "
+                "load it through load_evidence_source_executor after the "
+                "topology source, or set adapter.entity_resolver."
+            )
+
+        resolution: Resolution = self.entity_resolver.resolve(raw)
+
+        if resolution.resolved:
+            return resolution.entity_id
+
+        where = f" ({context})" if context else ""
+        result.warnings.append(
+            f"{self.source_id}{where}: {resolution.describe()}; record skipped."
+        )
+        return None
 
     def validate_result(
         self,
@@ -261,6 +303,7 @@ def load_evidence_source_executor(
     adapter = adapter_class(
         source_config=source_config
     )
+    adapter.entity_resolver = EntityResolver.from_graph(evidence_graph)
 
     adapter_result = adapter.load()
 
@@ -317,6 +360,8 @@ def load_investigation_evidence_executor(
                 f"✓ Loaded {source_config.source_id} "
                 f"using {source_config.adapter_name}"
             )
+            for warning in result["ingestion_result"]["warnings"]:
+                print(f"    ⚠ {warning}")
 
         except Exception as exc:
             source_errors[
