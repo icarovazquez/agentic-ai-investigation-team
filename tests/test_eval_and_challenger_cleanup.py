@@ -164,3 +164,10 @@ def test_downgraded_dispute_lets_loop_finish_in_round_one(monkeypatch):
     r = orch.run_investigation(_config())
     assert n["rounds"] == 1
     assert any("downgraded dispute" in x for x in r.residual_concerns)
+
+
+def test_qos_policy_misconfiguration_wording_matches_the_qos_ground_truth():
+    text = ("QoS Policy Misconfiguration on WAN Edge. The QoS policy was misconfigured after the router upgrade, "
+            "so voice is not prioritised.")
+    assert matches(text, "qos_misconfiguration", "qos_policy_detached")
+    assert not matches("WAN uplink congestion from a backup transfer", "qos_misconfiguration", "qos_policy_detached")
