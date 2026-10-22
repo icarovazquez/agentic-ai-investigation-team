@@ -242,6 +242,9 @@ class EvidenceGraph:
                 f"Unknown relationship: {relationship_id}"
             ) from exc
 
+    def list_relationships(self) -> List[NetworkRelationship]:
+        return list(self._relationships.values())
+
     def list_entities(
         self,
         entity_type: Optional[EntityType] = None,

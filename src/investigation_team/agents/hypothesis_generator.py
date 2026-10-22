@@ -12,6 +12,7 @@ from langfuse import observe
 
 from ..capabilities.registry import available_capability_names
 from ..capabilities.topology import TopologyCapability
+from ..topology_context import network_scope
 from ..domain import HypothesisStatus
 from ..evidence_graph import EvidenceGraph
 from ..llm import llm_call, parse_or_repair_agent_response
@@ -138,6 +139,13 @@ def build_hypothesis_generation_context(
     return {
         "incident_frame": incident_frame.to_dict(),
         "topology_evidence": topology_evidence,
+        "network_scope": network_scope(
+            evidence_graph,
+            [
+                *incident_frame.affected_entity_ids,
+                *incident_frame.potentially_relevant_entity_ids,
+            ],
+        ),
         # Fix vs. the original notebook: this list was hardcoded and
         # had drifted out of sync (missing vendor_alert and
         # deep_diagnostics). Now derived from the capability
@@ -185,6 +193,11 @@ Important rules:
 6. Each hypothesis must specify at least one observation that
    would falsify it.
 7. Use only entity IDs present in the supplied context.
+   network_scope lists the entities and links around the affected
+   entities and their paths to services. Hypotheses may suspect any
+   of them. A fault can sit on shared infrastructure between the
+   affected entities and a service, not only on the reporting
+   endpoint, so consider each segment of those paths.
 8. Request only capabilities listed under available_capabilities.
 9. Do not treat benchmark ground truth as investigation evidence.
 10. Avoid duplicate hypotheses that describe the same failure
