@@ -14,6 +14,7 @@ from ..capabilities.registry import available_capability_names, capability_descr
 from ..capabilities.topology import TopologyCapability
 from ..config import NetworkInvestigationConfig
 from ..evidence_graph import EvidenceGraph
+from ..topology_context import network_scope
 from ..llm import llm_call, parse_or_repair_agent_response
 
 INCIDENT_FRAME_SCHEMA = """
@@ -158,6 +159,14 @@ def build_incident_framing_context(
 
         "topology_evidence": topology_evidence,
 
+        # Everything near the reported entities, plus their paths to any
+        # service. With a single reported endpoint there is no pair to
+        # trace a path between, so without this the context would name
+        # nothing but the reporter's own device.
+        "network_scope": network_scope(
+            evidence_graph, seed.reported_entities
+        ),
+
         "vendor_alerts": vendor_alerts,
 
         # Fix vs. the original notebook: this list was hardcoded and
@@ -226,6 +235,9 @@ Return only a Python dictionary with exactly these keys:
 }
 
 Use only entity IDs that appear in the supplied context.
+network_scope lists the entities and links around the reported
+entities. Entities that share a path with the affected ones, or sit
+between them and a service, belong in potentially_relevant_entity_ids.
 Only request capabilities listed under available_capabilities.
 """
 
