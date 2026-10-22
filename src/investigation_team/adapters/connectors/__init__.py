@@ -5,4 +5,4 @@ pagerduty.py as a template, then import it below so it self-registers
 on package import -- nothing else in the codebase needs to change.
 """
 
-from . import nika, pagerduty  # noqa: F401
+from . import nika, nika_qos, pagerduty, teams  # noqa: F401

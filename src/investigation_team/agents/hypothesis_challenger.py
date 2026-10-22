@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from langfuse import observe
 
-from ..capabilities.registry import capability_descriptions, resolve_capability_name
+from ..capabilities.registry import capability_descriptions, capability_observables, resolve_capability_name
 from ..llm import llm_call, parse_or_repair_agent_response
 from .evidence_analyst import EvidenceAnalysis, HypothesisAssessment
 from .hypothesis_generator import HypothesisSet
@@ -26,6 +26,7 @@ CHALLENGE_REPORT_SCHEMA = """
             "rebuttal": str,
             "alternative_explanation": str | None,
             "distinguishing_capability": str | None,
+            "distinguishing_observable": str | None,
             "distinguishing_observation": str | None,
             "additional_evidence_needed": list[str]
         }
@@ -59,6 +60,7 @@ class HypothesisChallenge:
     # observation that separates the two explanations. Code, not the
     # prompt, enforces this (see enforce_dispute_actionability).
     distinguishing_capability: Optional[str] = None
+    distinguishing_observable: Optional[str] = None
     distinguishing_observation: Optional[str] = None
 
     # Set when a dispute was downgraded to "upheld" because nothing the
@@ -142,9 +144,11 @@ def enforce_dispute_actionability(
         capability = resolve_capability_name(
             challenge.distinguishing_capability or ""
         )
+        observable = (challenge.distinguishing_observable or "").strip()
         observation = (challenge.distinguishing_observation or "").strip()
+        declared = capability_observables().get(capability or "", ())
 
-        if capability is not None and observation:
+        if capability is not None and observable in declared and observation:
             challenge.distinguishing_capability = capability
             continue
 
@@ -152,6 +156,11 @@ def enforce_dispute_actionability(
             reason = (
                 "no available capability was named that could produce "
                 "the distinguishing observation"
+            )
+        elif observable not in declared:
+            reason = (
+                f"'{observable or 'nothing'}' is not something {capability} "
+                f"can return (it returns: {', '.join(declared) or 'nothing'})"
             )
         else:
             reason = "no distinguishing observation was specified"
@@ -322,9 +331,12 @@ For the leading_assessment and runner_up_assessment supplied:
    - "unresolved": the evidence is too thin to argue either way.
 3. If you dispute an assessment, name that specific alternative
    explanation, plus distinguishing_capability (exactly one name from
-   the available capabilities) and distinguishing_observation (what
-   that capability would measure). For upheld or unresolved
-   challenges set both to null.
+   the available capabilities), distinguishing_observable (exactly one
+   of the observables listed for that capability) and
+   distinguishing_observation (what you expect it to show under each
+   explanation). For upheld or unresolved challenges set all three to
+   null. Anything not in an observables list (optical power, signal
+   quality, historical trends, timestamps, logs) cannot be collected.
 4. List any additional evidence that would resolve the dispute. If
    you upheld the assessment, list only evidence that would further
    strengthen it (it need not be collected).
@@ -353,6 +365,7 @@ Return ONLY a Python dictionary with exactly this shape:
             "rebuttal": str,
             "alternative_explanation": str | None,
             "distinguishing_capability": str | None,
+            "distinguishing_observable": str | None,
             "distinguishing_observation": str | None,
             "additional_evidence_needed": list[str]
         }
@@ -364,8 +377,9 @@ challenge_outcome must be exactly one of: "upheld", "disputed",
 "unresolved".
 """
 
+    observables = capability_observables()
     capability_catalog = "\n".join(
-        f"- {name}: {description}"
+        f"- {name}: {description} [observables: {', '.join(observables.get(name, ())) or 'none'}]"
         for name, description in capability_descriptions().items()
     )
     system_prompt += (
@@ -419,6 +433,7 @@ Challenge the leading hypothesis assessment(s).
                 "additional_evidence_needed", []
             ),
             distinguishing_capability=item.get("distinguishing_capability"),
+            distinguishing_observable=item.get("distinguishing_observable"),
             distinguishing_observation=item.get("distinguishing_observation"),
         )
         challenges.append(challenge)

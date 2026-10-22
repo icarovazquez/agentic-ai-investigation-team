@@ -13,6 +13,7 @@ from .registry import register_capability
         "Provides entity relationships, neighbors, paths, "
         "and structural blast-radius evidence."
     ),
+    observables=("entity_relationships", "network_paths"),
 )
 class TopologyCapability:
     """

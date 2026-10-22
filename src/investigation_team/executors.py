@@ -230,6 +230,38 @@ def network_state_evidence_executor(
     }
 
 
+def call_quality_evidence_executor(
+    evidence_graph: EvidenceGraph,
+    entity_ids: List[str],
+) -> Dict[str, Any]:
+    """
+    Retrieve per-call quality measurements (jitter, packet loss, round
+    trip time) recorded for endpoints, as normalized by the call-quality
+    adapter.
+    """
+
+    call_quality_metrics = {
+        "call_jitter_ms",
+        "call_packet_loss_pct",
+        "call_rtt_ms",
+    }
+
+    observations = evidence_graph.get_observations(entity_ids=entity_ids)
+
+    matching = [
+        observation.to_dict()
+        for observation in observations
+        if observation.metric_name in call_quality_metrics
+    ]
+
+    return {
+        "executor": "call_quality_evidence_executor",
+        "entity_ids": list(entity_ids),
+        "observations": matching,
+        "observation_count": len(matching),
+    }
+
+
 def vendor_alert_evidence_executor(
     evidence_graph: EvidenceGraph,
     entity_ids: List[str],

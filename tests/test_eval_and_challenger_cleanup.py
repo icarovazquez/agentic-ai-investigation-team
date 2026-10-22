@@ -49,30 +49,42 @@ def test_unknown_fault_types_still_match_on_their_own_label():
     assert not matches("A link failure", "bgp_misconfiguration", None)
 
 
-def C(outcome="disputed", cap=None, obs=None, status="supported"):
+def C(outcome="disputed", cap=None, obs=None, status="supported", observable=None):
     return HypothesisChallenge(hypothesis_id="h1", original_status=status, original_confidence=0.9,
                                challenge_outcome=outcome, rebuttal="r", alternative_explanation="alt",
                                additional_evidence_needed=["history"],
-                               distinguishing_capability=cap, distinguishing_observation=obs)
+                               distinguishing_capability=cap, distinguishing_observable=observable,
+                               distinguishing_observation=obs)
 
 
 def test_dispute_without_a_collectable_observation_is_downgraded():
-    c = C(cap=None, obs="CRC history")
+    c = C(cap=None, obs="CRC history", observable="interface_error_count")
     notes = enforce_dispute_actionability([c])
     assert c.challenge_outcome == "upheld" and c.downgrade_note and notes
-    c2 = C(cap="historical_telemetry", obs="CRC history")     # not a registered capability
+    c2 = C(cap="historical_telemetry", obs="CRC history", observable="x")     # not a registered capability
     enforce_dispute_actionability([c2])
     assert c2.challenge_outcome == "upheld"
-    c3 = C(cap="deep_diagnostics", obs=" ")
+    c3 = C(cap="deep_diagnostics", obs=" ", observable="interface_error_count")
     enforce_dispute_actionability([c3])
     assert c3.challenge_outcome == "upheld"
 
 
 def test_dispute_naming_a_real_capability_and_observation_stays_disputed():
-    c = C(cap="deep_diagnostics", obs="interface_error_count on router2")
+    c = C(cap="deep_diagnostics", obs="CRC counts on router2", observable="interface_error_count")
     assert enforce_dispute_actionability([c]) == []
     assert c.challenge_outcome == "disputed" and c.distinguishing_capability == "deep_diagnostics"
     assert c.downgrade_note is None
+
+
+def test_dispute_asking_for_something_no_capability_returns_is_downgraded():
+    # the real run: optical power requested "via deep_diagnostics"
+    c = C(cap="deep_diagnostics", obs="optical power levels", observable="optical_power")
+    notes = enforce_dispute_actionability([c])
+    assert c.challenge_outcome == "upheld" and "optical_power" in c.downgrade_note and notes
+    # a real capability with an observable that belongs to a DIFFERENT capability
+    c2 = C(cap="reachability", obs="CRC counts", observable="interface_error_count")
+    enforce_dispute_actionability([c2])
+    assert c2.challenge_outcome == "upheld"
 
 
 def test_other_outcomes_are_left_alone():
@@ -102,7 +114,7 @@ def test_agent_downgrades_unactionable_dispute_end_to_end(monkeypatch):
     from investigation_team.domain import HypothesisStatus as S
     parsed = {"challenges": [{
         "hypothesis_id": "h1", "challenge_outcome": "disputed", "rebuttal": "transient vs permanent",
-        "alternative_explanation": "transient fault", "distinguishing_capability": None,
+        "alternative_explanation": "transient fault", "distinguishing_capability": None, "distinguishing_observable": None,
         "distinguishing_observation": "CRC history", "additional_evidence_needed": ["CRC history"]}],
         "systemic_concerns": []}
     captured = {}
@@ -121,6 +133,7 @@ def test_agent_downgrades_unactionable_dispute_end_to_end(monkeypatch):
     assert report.challenges[0].downgrade_note
     for name in ("network_state", "deep_diagnostics", "reachability", "vendor_alert", "topology"):
         assert name in captured["system"], "capability catalog must be in the Challenger prompt"
+    assert "interface_error_count" in captured["system"] and "ping_success" in captured["system"]
 
 
 def test_downgraded_dispute_lets_loop_finish_in_round_one(monkeypatch):
