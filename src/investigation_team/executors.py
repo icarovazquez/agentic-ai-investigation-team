@@ -230,6 +230,120 @@ def network_state_evidence_executor(
     }
 
 
+SERVICE_TICKET_EVENT_TYPE = "service_ticket"
+
+
+def service_desk_evidence_executor(
+    evidence_graph: EvidenceGraph,
+    entity_ids: List[str],
+) -> Dict[str, Any]:
+    """Service-desk tickets that name these entities (what people reported)."""
+
+    events = evidence_graph.get_events(
+        entity_ids=entity_ids,
+        event_types=[SERVICE_TICKET_EVENT_TYPE],
+    )
+
+    return {
+        "executor": "service_desk_evidence_executor",
+        "entity_ids": list(entity_ids),
+        "events": [event.to_dict() for event in events],
+        "event_count": len(events),
+    }
+
+
+def change_history_evidence_executor(
+    evidence_graph: EvidenceGraph,
+    entity_ids: List[str],
+) -> Dict[str, Any]:
+    """Recorded changes (upgrades, config pushes, ...) touching these entities."""
+
+    changes = evidence_graph.get_changes(entity_ids=entity_ids)
+
+    return {
+        "executor": "change_history_evidence_executor",
+        "entity_ids": list(entity_ids),
+        "changes": [change.to_dict() for change in changes],
+        "change_count": len(changes),
+    }
+
+
+def traffic_evidence_executor(
+    evidence_graph: EvidenceGraph,
+    entity_ids: List[str],
+) -> Dict[str, Any]:
+    """
+    Fetch link traffic and QoS state for the given entities and add it to
+    the evidence graph as it is retrieved. Like deep diagnostics, this is
+    an explicit query (flow and queue data are not part of the first
+    response snapshot).
+
+    Deterministic fixture for the qos_contention scenario: the WAN uplink
+    is saturated by one workstation's bulk transfer, voice is marked
+    correctly by clients, and no QoS service-policy is attached to the
+    WAN interface. A later version would query flow collectors and the
+    device's policy state.
+    """
+
+    SOURCE_ID = "nika_qos_contention_traffic"
+    OBSERVED_AT = "2026-09-14T09:50:00Z"
+    P = "nika:qos_contention"
+    wan = {"link_name": "wan-uplink", "direction": "egress", "interval": "09:00-09:50Z"}
+
+    def obs(oid, entity, metric, value, unit=None, **dimensions):
+        return ObservationRecord(
+            observation_id=f"{P}:obs:{oid}", source_id=SOURCE_ID, entity_id=f"{P}:{entity}",
+            metric_name=metric, metric_value=value, observed_at=OBSERVED_AT, unit=unit,
+            dimensions=dimensions)
+
+    fixture = {
+        f"{P}:router1": [
+            obs("router1-wan-utilization", "router1", "link_utilization_pct", 97, "percent", **wan),
+            obs("router1-wan-queue-drops", "router1", "queue_drops", 48210, "packets",
+                traffic_class="default", **wan),
+            obs("router1-wan-service-policy", "router1", "service_policy_attached", False,
+                expected_policy="WAN-EDGE-QOS", **wan),
+        ],
+        f"{P}:ws3": [
+            obs("ws3-top-talker", "ws3", "top_talker_bps", 86_000_000, "bits_per_second",
+                destination="external backup service", protocol="tcp/443", **wan),
+            obs("ws3-dscp", "ws3", "dscp_marking", "CS0", None, traffic="bulk transfer"),
+        ],
+        f"{P}:ws1": [
+            obs("ws1-teams-dscp", "ws1", "dscp_marking", "EF", None, traffic="teams media"),
+            obs("ws1-teams-rate", "ws1", "top_talker_bps", 1_400_000, "bits_per_second",
+                destination="teams-relay", **wan),
+        ],
+        f"{P}:ws2": [
+            obs("ws2-teams-dscp", "ws2", "dscp_marking", "EF", None, traffic="teams media"),
+            obs("ws2-teams-rate", "ws2", "top_talker_bps", 1_300_000, "bits_per_second",
+                destination="teams-relay", **wan),
+        ],
+    }
+
+    new_observations = []
+
+    for entity_id in entity_ids:
+        for observation in fixture.get(entity_id, []):
+            try:
+                evidence_graph.add_observation(observation)
+                new_observations.append(observation)
+            except ValueError:
+                # Already added by an earlier round's call; still return it.
+                new_observations.extend(
+                    o for o in evidence_graph.get_observations(
+                        entity_ids=[entity_id], metric_names=[observation.metric_name])
+                    if o.observation_id == observation.observation_id
+                )
+
+    return {
+        "executor": "traffic_evidence_executor",
+        "entity_ids": list(entity_ids),
+        "observations": [o.to_dict() for o in new_observations],
+        "observation_count": len(new_observations),
+    }
+
+
 def call_quality_evidence_executor(
     evidence_graph: EvidenceGraph,
     entity_ids: List[str],
@@ -277,9 +391,11 @@ def vendor_alert_evidence_executor(
     vendor or event type can filter the result further.
     """
 
-    events = evidence_graph.get_events(
-        entity_ids=entity_ids
-    )
+    events = [
+        event
+        for event in evidence_graph.get_events(entity_ids=entity_ids)
+        if event.event_type != SERVICE_TICKET_EVENT_TYPE
+    ]
 
     return {
         "executor": "vendor_alert_evidence_executor",

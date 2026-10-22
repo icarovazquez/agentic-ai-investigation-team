@@ -376,7 +376,7 @@ def load_investigation_evidence_executor(
 
             print(
                 f"⚠ Optional evidence source unavailable: "
-                f"{source_config.source_id}"
+                f"{source_config.source_id} ({type(exc).__name__}: {exc})"
             )
 
     return {

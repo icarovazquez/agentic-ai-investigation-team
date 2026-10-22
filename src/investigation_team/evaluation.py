@@ -71,6 +71,36 @@ FAULT_SYNONYM_GROUPS: List[Dict[str, List[str]]] = [
             "fiber cut",
         ],
     },
+    {
+        "labels": [
+            "qos policy detached",
+            "qos policy missing",
+            "qos policy not applied",
+            "qos misconfiguration",
+        ],
+        "phrases": [
+            "qos policy detached",
+            "qos policy missing",
+            "qos policy not applied",
+            "qos policy not attached",
+            "qos policy was removed",
+            "qos misconfiguration",
+            "policy detached",
+            "policy was detached",
+            "policy not attached",
+            "policy is not attached",
+            "policy removed",
+            "policy was removed",
+            "policy missing",
+            "policy is missing",
+            "missing qos",
+            "no qos policy",
+            "without qos",
+            "lack of qos",
+            "absence of qos",
+            "service policy",
+        ],
+    },
 ]
 
 

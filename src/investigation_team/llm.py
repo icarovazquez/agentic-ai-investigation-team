@@ -30,6 +30,7 @@ Client = ai.Client()
 DEFAULT_AGENT_MODEL = "anthropic:claude-haiku-4-5"
 
 AGENT_MODEL_MAP = {
+    "ticket_extraction_agent": DEFAULT_AGENT_MODEL,
     "incident_framing_agent": DEFAULT_AGENT_MODEL,
     "hypothesis_generator_agent": DEFAULT_AGENT_MODEL,
     "evidence_planning_agent": DEFAULT_AGENT_MODEL,
@@ -45,6 +46,7 @@ AGENT_MODEL_MAP = {
 # entries for consistency and so future tuning is deliberate, not
 # accidental.
 AGENT_MAX_TOKENS = {
+    "ticket_extraction_agent": 1500,
     "incident_framing_agent": 2500,
     "hypothesis_generator_agent": 4000,  # was 2000; verbose 3-4 hypothesis outputs were truncated mid-JSON
     "evidence_planning_agent": 2500,       # output is now a short gap list
