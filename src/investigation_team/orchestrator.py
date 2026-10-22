@@ -16,6 +16,7 @@ from langfuse import observe
 from . import capabilities  # noqa: F401 -- import triggers capability registration
 from .adapters.base import load_investigation_evidence_executor
 from .agents.evidence_analyst import check_evidence_analysis_leakage, evidence_analyst_agent, EvidenceAnalysis
+from .agents.causal_resolution import CausalResolution, causal_resolution_agent, chain_candidates
 from .agents.evidence_planner import evidence_planning_agent
 from .agents.evidence_test_creator import evidence_test_creation_agent
 from .agents.hypothesis_challenger import ChallengeReport, describe_challenge_outcome, hypothesis_challenger_agent
@@ -31,6 +32,7 @@ from .config import NetworkInvestigationConfig
 from .convergence import check_convergence, residual_concerns
 from .domain import EvidencePlan, EvidenceTestResult, InvestigationStatus
 from .evidence_graph import EvidenceGraph
+from .evidence_progress import evidence_ids
 from .executors import execute_evidence_plan
 
 
@@ -83,6 +85,13 @@ class InvestigationRunResult:
     convergence_note: Optional[str] = None
     residual_concerns: List[str] = field(default_factory=list)
 
+    # Set when the loop stopped because a round returned no evidence the
+    # investigation did not already have.
+    exhaustion_note: Optional[str] = None
+
+    # How the supported hypotheses relate (rivals or causal chain).
+    causal_resolution: Optional[CausalResolution] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "investigation_id": self.investigation_id,
@@ -119,6 +128,11 @@ class InvestigationRunResult:
             "error": self.error,
             "convergence_note": self.convergence_note,
             "residual_concerns": self.residual_concerns,
+            "exhaustion_note": self.exhaustion_note,
+            "causal_resolution": (
+                self.causal_resolution.to_dict()
+                if self.causal_resolution else None
+            ),
         }
 
 
@@ -231,11 +245,14 @@ def run_investigation(
     all_tests = []  # every test from every round, for the analyst
     analysis_history = []
     convergence_note = None
+    exhaustion_note = None
+    seen_evidence_ids = set()
     open_concerns = []
     evidence_results: List[EvidenceTestResult] = []
     evidence_analysis = None
     challenge_report = None
     round_number = 0
+    leading_assessment = None
 
     for round_number in range(1, max_iterations + 1):
 
@@ -325,6 +342,26 @@ def run_investigation(
             print(f"⚠ Round {round_number}: {len(failed_results)} test(s) FAILED to execute:")
             for r in failed_results:
                 print(f"    {r.test_id} [{r.capability}]: {r.error}")
+
+        # Evidence exhaustion: if this round surfaced nothing the
+        # investigation did not already hold, re-analysing it repeats the
+        # last answer and another round would plan the same tests again.
+        # The previous round's analysis and challenge stand.
+        round_ids = evidence_ids(round_results)
+        new_ids = round_ids - seen_evidence_ids
+        seen_evidence_ids |= round_ids
+        if round_number > 1 and not new_ids and evidence_analysis is not None:
+            exhaustion_note = (
+                f"Stopped in round {round_number}: the tests returned no evidence "
+                "beyond what earlier rounds already collected. The remaining "
+                "objections need data none of the available sources provide."
+            )
+            print(f"✓ Round {round_number}: {exhaustion_note}")
+            if challenge_report is not None and leading_assessment is not None:
+                open_concerns = residual_concerns(
+                    challenge_report, leading_assessment.hypothesis_id
+                )
+            break
 
         # ------------------------------------------------------
         # Stage 5: Analyze evidence against hypotheses
@@ -484,6 +521,47 @@ def run_investigation(
             ),
         )
 
+    # ------------------------------------------------------
+    # Stage 6b: Causal resolution. When more than one hypothesis is
+    # supported, decide whether they are rivals or a causal chain, so the
+    # root cause is not picked by a confidence gap of a few hundredths.
+    # ------------------------------------------------------
+
+    resolution = None
+    final_leader = select_leading_hypothesis(
+        evidence_analysis=evidence_analysis,
+        minimum_confidence=policy.minimum_diagnosis_confidence,
+    )
+    if final_leader is not None:
+        candidates = chain_candidates(
+            evidence_analysis, policy.contributing_cause_minimum_confidence
+        )
+        if len(candidates) >= 2:
+            try:
+                resolution = causal_resolution_agent(
+                    incident_frame=incident_frame,
+                    hypothesis_set=hypothesis_set,
+                    evidence_analysis=evidence_analysis,
+                    candidates=candidates,
+                    default_root_id=final_leader.hypothesis_id,
+                )
+            except Exception as exc:
+                print(
+                    "⚠ Causal resolution failed; using the highest-confidence "
+                    f"hypothesis as the root cause: {describe_exception(exc)}"
+                )
+            if resolution is not None:
+                print(
+                    f"✓ Causal resolution: {resolution.relationship}; root cause "
+                    f"{resolution.root_cause_hypothesis_id}"
+                    + (
+                        f", contributing {', '.join(resolution.contributing_hypothesis_ids)}"
+                        if resolution.contributing_hypothesis_ids else ""
+                    )
+                )
+                for note in resolution.notes:
+                    print(f"    ℹ {note}")
+
     try:
         root_cause_recommendation = root_cause_remediation_agent(
             incident_frame=incident_frame,
@@ -491,6 +569,14 @@ def run_investigation(
             evidence_analysis=evidence_analysis,
             challenge_report=challenge_report,
             investigation_policy=investigation_config.investigation_policy,
+            root_cause_hypothesis_id=(
+                resolution.root_cause_hypothesis_id
+                if resolution and resolution.relationship == "causal_chain" else None
+            ),
+            contributing_hypothesis_ids=(
+                resolution.contributing_hypothesis_ids if resolution else None
+            ),
+            causal_rationale=(resolution.rationale if resolution else None),
         )
 
     except Exception as exc:
@@ -535,4 +621,6 @@ def run_investigation(
         root_cause_recommendation=root_cause_recommendation,
         convergence_note=convergence_note,
         residual_concerns=open_concerns,
+        exhaustion_note=exhaustion_note,
+        causal_resolution=resolution,
     )

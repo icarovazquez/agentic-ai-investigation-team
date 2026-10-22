@@ -81,7 +81,10 @@ def test_loop_stops_on_convergence_and_records_residual_concerns(monkeypatch):
         return EvidencePlan(incident_id="inc", tests=[EvidenceTest(
             test_id=f"inc-r{kw['round_number']}-test-1", hypothesis_id="h1", objective="o", capability="topology")])
     monkeypatch.setattr(orch, "evidence_test_creation_agent", create)
-    monkeypatch.setattr(orch, "execute_evidence_plan", lambda **kw: [])
+    from investigation_team.domain import EvidenceTestResult
+    monkeypatch.setattr(orch, "execute_evidence_plan", lambda **kw: [EvidenceTestResult(
+        test_id=kw["evidence_plan"].tests[0].test_id, hypothesis_id="h1", capability="topology", status="completed",
+        evidence={"topology_evidence": {"observations": [{"observation_id": kw["evidence_plan"].tests[0].test_id}]}})])
     analysis = EvidenceAnalysis(incident_id="inc", assessments=[
         HypothesisAssessment(hypothesis_id="h1", status=S.SUPPORTED, confidence=0.92, rationale="r"),
         HypothesisAssessment(hypothesis_id="h2", status=S.REJECTED, confidence=0.05, rationale="r")])

@@ -79,6 +79,13 @@ class RootCauseRecommendation:
     # how the challenger's dispute (if any) was addressed
     challenge_acknowledged: Optional[str] = None
 
+    # Set when several supported hypotheses were found to be a causal
+    # chain: hypothesis_id is the underlying cause, these are the
+    # contributing factors (triggers) that remediation also addresses.
+    causal_relationship: str = "single_cause"  # "single_cause" | "causal_chain"
+    contributing_hypothesis_ids: List[str] = field(default_factory=list)
+    causal_rationale: Optional[str] = None
+
     def validate(self) -> None:
         valid_statuses = {"root_cause_identified", "insufficient_evidence"}
 
@@ -117,6 +124,9 @@ class RootCauseRecommendation:
             "remediation_steps": [s.to_dict() for s in self.remediation_steps],
             "residual_risk": self.residual_risk,
             "challenge_acknowledged": self.challenge_acknowledged,
+            "causal_relationship": self.causal_relationship,
+            "contributing_hypothesis_ids": list(self.contributing_hypothesis_ids),
+            "causal_rationale": self.causal_rationale,
         }
 
 
@@ -177,6 +187,8 @@ def build_root_cause_context(
     hypothesis_set: HypothesisSet,
     leading_assessment: HypothesisAssessment,
     challenge_report: Optional[ChallengeReport],
+    contributing_assessments: Optional[List[HypothesisAssessment]] = None,
+    causal_rationale: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Build bounded context for Root Cause & Remediation.
@@ -196,7 +208,7 @@ def build_root_cause_context(
                 matching_challenge = c.to_dict()
                 break
 
-    return {
+    context = {
         "incident_frame": incident_frame.to_dict(),
         "leading_hypothesis": (
             leading_hypothesis.to_dict() if leading_hypothesis else None
@@ -204,6 +216,21 @@ def build_root_cause_context(
         "leading_assessment": leading_assessment.to_dict(),
         "challenger_verdict": matching_challenge,
     }
+
+    if contributing_assessments:
+        context["contributing_factors"] = [
+            {
+                "hypothesis": (
+                    hypotheses_by_id[a.hypothesis_id].to_dict()
+                    if a.hypothesis_id in hypotheses_by_id else None
+                ),
+                "assessment": a.to_dict(),
+            }
+            for a in contributing_assessments
+        ]
+        context["causal_rationale"] = causal_rationale
+
+    return context
 
 
 @observe(name="root_cause_remediation_agent")
@@ -213,6 +240,9 @@ def root_cause_remediation_agent(
     evidence_analysis: EvidenceAnalysis,
     challenge_report: Optional[ChallengeReport],
     investigation_policy: InvestigationPolicy,
+    root_cause_hypothesis_id: Optional[str] = None,
+    contributing_hypothesis_ids: Optional[List[str]] = None,
+    causal_rationale: Optional[str] = None,
 ) -> RootCauseRecommendation:
     """
     Commit to a root cause and recommend remediation, or explicitly
@@ -223,6 +253,12 @@ def root_cause_remediation_agent(
     is narrower: explain the chosen cause in plain language, address
     the Challenger's dispute if one exists, and propose concrete
     remediation steps.
+
+    When causal resolution found a causal chain, the caller passes the
+    underlying cause as root_cause_hypothesis_id and the triggers or
+    other factors as contributing_hypothesis_ids. The root cause is
+    reported with its own confidence, which may be below the bar the
+    chain's leader cleared.
     """
 
     agent_name = "root_cause_remediation_agent"
@@ -231,6 +267,17 @@ def root_cause_remediation_agent(
         evidence_analysis=evidence_analysis,
         minimum_confidence=investigation_policy.minimum_diagnosis_confidence,
     )
+
+    contributing_assessments: List[HypothesisAssessment] = []
+    if leading_assessment is not None and root_cause_hypothesis_id:
+        by_id = {a.hypothesis_id: a for a in evidence_analysis.assessments}
+        chosen = by_id.get(root_cause_hypothesis_id)
+        if chosen is not None and chosen.status == HypothesisStatus.SUPPORTED:
+            leading_assessment = chosen
+            contributing_assessments = [
+                by_id[hid] for hid in (contributing_hypothesis_ids or [])
+                if hid in by_id and hid != chosen.hypothesis_id
+            ]
 
     if leading_assessment is None:
         recommendation = RootCauseRecommendation(
@@ -245,6 +292,8 @@ def root_cause_remediation_agent(
         hypothesis_set=hypothesis_set,
         leading_assessment=leading_assessment,
         challenge_report=challenge_report,
+        contributing_assessments=contributing_assessments,
+        causal_rationale=causal_rationale,
     )
 
     system_prompt = """
@@ -267,6 +316,16 @@ you do NOT choose among hypotheses. Your job is:
    performing that action, not the risk of the incident itself.
 4. State any residual_risk: what could still be wrong even if this
    remediation is applied, given any gaps the evidence has.
+
+If contributing_factors are present, the incident is a causal chain:
+the leading hypothesis is the UNDERLYING CAUSE and each contributing
+factor is a trigger or aggravating condition that is also true. Then:
+explain the chain in order (underlying cause first, then how the
+contributing factor exposed it), order remediation so the underlying
+cause is fixed first, and for every step say in its rationale whether
+it addresses the underlying cause or a contributing factor. A trigger
+that is normal load the system should tolerate is not "fixed"; say
+what to do about it, if anything, and that it is not the cause.
 
 Critical rules:
 
@@ -352,6 +411,9 @@ Explain the root cause and recommend remediation.
         remediation_steps=remediation_steps,
         residual_risk=parsed.get("residual_risk"),
         challenge_acknowledged=parsed.get("challenge_acknowledged"),
+        causal_relationship="causal_chain" if contributing_assessments else "single_cause",
+        contributing_hypothesis_ids=[a.hypothesis_id for a in contributing_assessments],
+        causal_rationale=causal_rationale if contributing_assessments else None,
     )
 
     recommendation.validate()

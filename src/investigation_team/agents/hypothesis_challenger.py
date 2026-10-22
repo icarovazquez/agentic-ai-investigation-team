@@ -25,6 +25,7 @@ CHALLENGE_REPORT_SCHEMA = """
             "challenge_outcome": str,
             "rebuttal": str,
             "alternative_explanation": str | None,
+            "rival_hypothesis_id": str | None,
             "distinguishing_capability": str | None,
             "distinguishing_observable": str | None,
             "distinguishing_observation": str | None,
@@ -55,6 +56,13 @@ class HypothesisChallenge:
 
     alternative_explanation: Optional[str] = None
     additional_evidence_needed: List[str] = field(default_factory=list)
+
+    # The hypothesis the Challenger believes is the competing
+    # explanation, when it is one of the hypotheses already assessed.
+    # If that rival is itself supported, the question is how the two
+    # relate (rivals or a causal chain), which more evidence cannot
+    # settle: it goes to causal resolution.
+    rival_hypothesis_id: Optional[str] = None
 
     # A dispute must say which registered capability could produce the
     # observation that separates the two explanations. Code, not the
@@ -120,6 +128,7 @@ class ChallengeReport:
 
 def enforce_dispute_actionability(
     challenges: List[HypothesisChallenge],
+    supported_ids: Optional[List[str]] = None,
 ) -> List[str]:
     """
     A dispute only keeps the loop running if another round could
@@ -139,6 +148,22 @@ def enforce_dispute_actionability(
 
     for challenge in challenges:
         if challenge.challenge_outcome != "disputed":
+            continue
+
+        rival = (challenge.rival_hypothesis_id or "").strip()
+        if (
+            rival
+            and rival != challenge.hypothesis_id
+            and rival in (supported_ids or [])
+        ):
+            challenge.challenge_outcome = "upheld"
+            challenge.downgrade_note = (
+                f"Dispute routed to causal resolution: the rival "
+                f"({rival}) is itself supported, so the open question is "
+                "how the two relate (rivals or a causal chain), which "
+                "another evidence round cannot settle."
+            )
+            notes.append(f"{challenge.hypothesis_id}: {challenge.downgrade_note}")
             continue
 
         capability = resolve_capability_name(
@@ -330,7 +355,9 @@ For the leading_assessment and runner_up_assessment supplied:
      refines the hypothesis; it is not a rival explanation.
    - "unresolved": the evidence is too thin to argue either way.
 3. If you dispute an assessment, name that specific alternative
-   explanation, plus distinguishing_capability (exactly one name from
+   explanation, rival_hypothesis_id (the hypothesis_id from
+   all_assessment_statuses that states that alternative, or null if
+   it is none of them), plus distinguishing_capability (exactly one name from
    the available capabilities), distinguishing_observable (exactly one
    of the observables listed for that capability) and
    distinguishing_observation (what you expect it to show under each
@@ -364,6 +391,7 @@ Return ONLY a Python dictionary with exactly this shape:
             "challenge_outcome": str,
             "rebuttal": str,
             "alternative_explanation": str | None,
+            "rival_hypothesis_id": str | None,
             "distinguishing_capability": str | None,
             "distinguishing_observable": str | None,
             "distinguishing_observation": str | None,
@@ -432,6 +460,7 @@ Challenge the leading hypothesis assessment(s).
             additional_evidence_needed=item.get(
                 "additional_evidence_needed", []
             ),
+            rival_hypothesis_id=item.get("rival_hypothesis_id"),
             distinguishing_capability=item.get("distinguishing_capability"),
             distinguishing_observable=item.get("distinguishing_observable"),
             distinguishing_observation=item.get("distinguishing_observation"),
@@ -453,7 +482,16 @@ Challenge the leading hypothesis assessment(s).
 
         challenge.validate()
 
-    for note in enforce_dispute_actionability(challenges):
+    # A rival id the model made up is dropped, not trusted.
+    for challenge in challenges:
+        if challenge.rival_hypothesis_id not in assessments_by_id:
+            challenge.rival_hypothesis_id = None
+
+    supported_ids = [
+        a.hypothesis_id for a in evidence_analysis.assessments
+        if a.status.value == "supported"
+    ]
+    for note in enforce_dispute_actionability(challenges, supported_ids):
         print(f"    ℹ {note}")
 
     report = ChallengeReport(

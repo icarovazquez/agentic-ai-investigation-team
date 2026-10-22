@@ -158,6 +158,12 @@ class InvestigationPolicy:
     # consecutive rounds, even if the Challenger keeps objecting. The
     # open objections are recorded as residual concerns. 0 disables.
     convergence_stable_rounds: int = 2
+    # Supported hypotheses at or above this confidence are considered when
+    # deciding whether the explanation is a causal chain (trigger plus
+    # underlying cause) and not a single cause. Lower than
+    # minimum_diagnosis_confidence on purpose: a contributing factor does
+    # not have to clear the bar the leading explanation does.
+    contributing_cause_minimum_confidence: float = 0.60
     maximum_hypotheses: int = 5
     maximum_tests_per_hypothesis: int = 5
 
@@ -175,6 +181,11 @@ class InvestigationPolicy:
         if self.maximum_reasoning_iterations < 1:
             raise ValueError(
                 "maximum_reasoning_iterations must be at least 1."
+            )
+
+        if not 0.0 <= self.contributing_cause_minimum_confidence <= 1.0:
+            raise ValueError(
+                "contributing_cause_minimum_confidence must be between 0 and 1."
             )
 
         if self.convergence_stable_rounds < 0:

@@ -77,6 +77,19 @@ def print_run_summary(run_result: InvestigationRunResult) -> None:
         print(f"Root cause recommendation: {rec.hypothesis_id} (confidence={rec.confidence})")
         print(f"Diagnosis: {rec.status}")
 
+    resolution = getattr(run_result, "causal_resolution", None)
+    if resolution is not None:
+        print(f"Causal relationship: {resolution.relationship}")
+        if resolution.contributing_hypothesis_ids:
+            print(f"  underlying cause : {resolution.root_cause_hypothesis_id}")
+            print(f"  contributing     : {', '.join(resolution.contributing_hypothesis_ids)}")
+        if resolution.rationale:
+            print(f"  rationale        : {resolution.rationale[:400]}")
+
+    if getattr(run_result, "exhaustion_note", None):
+        print()
+        print(run_result.exhaustion_note)
+
     if getattr(run_result, "convergence_note", None):
         print()
         print(run_result.convergence_note)
