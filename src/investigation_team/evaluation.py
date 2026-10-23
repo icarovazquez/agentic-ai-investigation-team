@@ -79,6 +79,15 @@ FAULT_SYNONYM_GROUPS: List[Dict[str, List[str]]] = [
             "qos misconfiguration",
             "qos policy misconfiguration",
         ],
+        # Wording varies run to run ("regression", "misconfiguration",
+        # "missing", ...). A QoS mention close to a defect word, in either
+        # order, is a structural match that does not depend on the phrase.
+        "patterns": [
+            r"\b(?:qos|service policy)\b[\w\s/-]{0,40}\b(?:regression|misconfigur\w*|missing|absent|absence|"
+            r"detach\w*|removed|removal|disabled|disablement|not (?:applied|attached|reapplied|enforced)|"
+            r"lost|dropped after|failed to (?:apply|attach))\b",
+            r"\b(?:missing|absent|lack of|no|without|misconfigured|removed|detached|disabled)\b[\w\s/-]{0,30}\b(?:qos|service policy)\b",
+        ],
         "phrases": [
             "qos policy detached",
             "qos policy missing",
@@ -140,7 +149,16 @@ def hypothesis_text_matches_fault(
     phrases = fault_match_phrases(
         ground_truth_fault_type or "", ground_truth_root_cause or ""
     )
-    return any(phrase in haystack for phrase in phrases)
+    if any(phrase in haystack for phrase in phrases):
+        return True
+    for raw in (ground_truth_fault_type or "", ground_truth_root_cause or ""):
+        label = normalize_label(raw)
+        for group in FAULT_SYNONYM_GROUPS:
+            if label in group["labels"] and any(
+                re.search(pattern, haystack) for pattern in group.get("patterns", [])
+            ):
+                return True
+    return False
 
 
 @dataclass
