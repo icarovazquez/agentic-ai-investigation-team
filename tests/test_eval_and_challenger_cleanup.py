@@ -171,3 +171,27 @@ def test_qos_policy_misconfiguration_wording_matches_the_qos_ground_truth():
             "so voice is not prioritised.")
     assert matches(text, "qos_misconfiguration", "qos_policy_detached")
     assert not matches("WAN uplink congestion from a backup transfer", "qos_misconfiguration", "qos_policy_detached")
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("text", [
+    "QoS policy regression on router1 WAN interface after the firmware upgrade",
+    "Missing QoS policy on the WAN uplink",
+    "The WAN-EDGE QoS policy was not reapplied after the reload",
+    "QoS configuration absent from the egress interface",
+    "Teams voice lost its QoS protection when the policy was removed",
+])
+def test_qos_wording_variants_match_structurally(text):
+    assert matches(text, "qos_misconfiguration", "qos_policy_detached")
+
+
+@_pytest.mark.parametrize("text", [
+    "WAN uplink bandwidth contention from a backup transfer saturating the 100 Mbps link",
+    "Switch port contention on switch1 causing queueing",
+    "QoS marking on Teams traffic is correct and the policy is attached",
+    "Packet loss on the internet path between router1 and the Teams relay",
+])
+def test_unrelated_hypotheses_do_not_match_the_qos_fault(text):
+    assert not matches(text, "qos_misconfiguration", "qos_policy_detached")
