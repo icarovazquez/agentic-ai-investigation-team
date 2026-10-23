@@ -19,6 +19,7 @@ from typing import List, Optional
 from .agents.evidence_analyst import EvidenceAnalysis
 from .agents.hypothesis_challenger import ChallengeReport
 from .agents.root_cause_remediation import directional_confidence, select_leading_hypothesis
+from .agents.hypothesis_challenger import ROUTED_NOTE_PREFIX
 from .domain import HypothesisStatus
 
 
@@ -63,17 +64,51 @@ def check_convergence(
 def residual_concerns(
     challenge_report: Optional[ChallengeReport],
     leader_id: str,
+    extra_ids: Optional[List[str]] = None,
+    after_causal_chain: bool = False,
 ) -> List[str]:
-    """Objections still open when the loop stops, kept for the final report."""
+    """
+    Objections still open when the loop stops, kept for the final report.
+
+    After a causal chain was resolved (after_causal_chain=True) the
+    Challenger's disputes that were routed to causal resolution are
+    settled by it, so their rebuttal is not an open concern (see
+    resolved_by_causal_resolution); the evidence they asked for still is.
+    Systemic concerns are free text written before the resolution, so they
+    are kept but labelled as such instead of being filtered by guesswork.
+    """
     if challenge_report is None:
         return []
+    ids = {leader_id, *(extra_ids or [])}
     concerns: List[str] = []
     for c in challenge_report.challenges:
-        if c.hypothesis_id != leader_id:
+        if c.hypothesis_id not in ids:
             continue
         if c.challenge_outcome != "upheld" or c.downgrade_note:
-            label = "downgraded dispute" if c.downgrade_note else c.challenge_outcome
-            concerns.append(f"Challenger ({label}): {c.rebuttal}")
+            routed = after_causal_chain and is_routed_to_causal_resolution(c)
+            if not routed:
+                label = "downgraded dispute" if c.downgrade_note else c.challenge_outcome
+                concerns.append(f"Challenger ({label}): {c.rebuttal}")
             concerns.extend(f"Evidence that would resolve it: {e}" for e in c.additional_evidence_needed)
-    concerns.extend(f"Systemic: {s}" for s in challenge_report.systemic_concerns)
+    prefix = "Systemic (raised before causal resolution)" if after_causal_chain else "Systemic"
+    concerns.extend(f"{prefix}: {s}" for s in challenge_report.systemic_concerns)
     return concerns
+
+
+def is_routed_to_causal_resolution(challenge) -> bool:
+    return bool(challenge.downgrade_note) and challenge.downgrade_note.startswith(ROUTED_NOTE_PREFIX)
+
+
+def resolved_by_causal_resolution(
+    challenge_report: Optional[ChallengeReport],
+    resolution,
+) -> List[str]:
+    """Disputes that causal resolution settled, with how it settled them."""
+    if challenge_report is None or resolution is None or resolution.relationship != "causal_chain":
+        return []
+    return [
+        f"{c.hypothesis_id} was disputed on the grounds that {c.rebuttal[:300]} "
+        f"Settled by causal resolution: {resolution.rationale[:300]}"
+        for c in challenge_report.challenges
+        if is_routed_to_causal_resolution(c)
+    ]

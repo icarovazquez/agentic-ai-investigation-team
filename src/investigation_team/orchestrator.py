@@ -29,7 +29,7 @@ from .capabilities.reachability import ReachabilityCapability
 from .capabilities.topology import TopologyCapability
 from .capabilities.vendor_alert import VendorAlertCapability
 from .config import NetworkInvestigationConfig
-from .convergence import check_convergence, residual_concerns
+from .convergence import check_convergence, residual_concerns, resolved_by_causal_resolution
 from .domain import EvidencePlan, EvidenceTestResult, InvestigationStatus
 from .evidence_graph import EvidenceGraph
 from .evidence_progress import evidence_ids
@@ -89,6 +89,9 @@ class InvestigationRunResult:
     # investigation did not already have.
     exhaustion_note: Optional[str] = None
 
+    # Challenger disputes that causal resolution settled, with its rationale.
+    resolved_concerns: List[str] = field(default_factory=list)
+
     # How the supported hypotheses relate (rivals or causal chain).
     causal_resolution: Optional[CausalResolution] = None
 
@@ -129,6 +132,7 @@ class InvestigationRunResult:
             "convergence_note": self.convergence_note,
             "residual_concerns": self.residual_concerns,
             "exhaustion_note": self.exhaustion_note,
+            "resolved_concerns": self.resolved_concerns,
             "causal_resolution": (
                 self.causal_resolution.to_dict()
                 if self.causal_resolution else None
@@ -562,6 +566,20 @@ def run_investigation(
                 for note in resolution.notes:
                     print(f"    ℹ {note}")
 
+    resolved_concerns: List[str] = []
+    if (
+        resolution is not None
+        and resolution.relationship == "causal_chain"
+        and challenge_report is not None
+    ):
+        resolved_concerns = resolved_by_causal_resolution(challenge_report, resolution)
+        open_concerns = residual_concerns(
+            challenge_report,
+            resolution.root_cause_hypothesis_id,
+            extra_ids=resolution.contributing_hypothesis_ids,
+            after_causal_chain=True,
+        )
+
     try:
         root_cause_recommendation = root_cause_remediation_agent(
             incident_frame=incident_frame,
@@ -622,5 +640,6 @@ def run_investigation(
         convergence_note=convergence_note,
         residual_concerns=open_concerns,
         exhaustion_note=exhaustion_note,
+        resolved_concerns=resolved_concerns,
         causal_resolution=resolution,
     )

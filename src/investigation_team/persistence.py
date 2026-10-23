@@ -94,6 +94,12 @@ def print_run_summary(run_result: InvestigationRunResult) -> None:
         print()
         print(run_result.convergence_note)
 
+    if getattr(run_result, "resolved_concerns", None):
+        print()
+        print("Disputes settled by causal resolution:")
+        for item in run_result.resolved_concerns:
+            print(f"  - {item[:500]}")
+
     if getattr(run_result, "residual_concerns", None):
         print()
         print("Open concerns at completion:")
