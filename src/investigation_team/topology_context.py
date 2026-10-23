@@ -93,6 +93,38 @@ def network_scope(
     }
 
 
+def recent_changes(
+    evidence_graph: EvidenceGraph,
+    scope: Dict[str, Any],
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    Change records on any entity in `scope` (the network_scope result),
+    newest first. Lets hypothesis generation start from what was changed,
+    instead of hoping the model guesses that a change is worth suspecting.
+    A record is a lead, not a verdict: nothing here says it caused anything.
+    """
+    scoped = [e["entity_id"] for e in scope.get("entities", [])]
+    if not scoped:
+        return []
+    records = sorted(
+        evidence_graph.get_changes(entity_ids=scoped),
+        key=lambda r: r.changed_at,
+        reverse=True,
+    )[:limit]
+    return [
+        {
+            "change_id": r.change_id,
+            "changed_at": r.changed_at,
+            "change_type": r.change_type,
+            "entity_ids": [e for e in r.entity_ids if e in set(scoped)],
+            "actor": r.actor,
+            "summary": r.attributes.get("summary"),
+        }
+        for r in records
+    ]
+
+
 def _known(evidence_graph: EvidenceGraph, entity_id: str) -> bool:
     try:
         evidence_graph.get_entity(entity_id)

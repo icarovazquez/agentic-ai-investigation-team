@@ -12,7 +12,7 @@ from langfuse import observe
 
 from ..capabilities.registry import available_capability_names
 from ..capabilities.topology import TopologyCapability
-from ..topology_context import network_scope
+from ..topology_context import network_scope, recent_changes
 from ..domain import HypothesisStatus
 from ..evidence_graph import EvidenceGraph
 from ..llm import llm_call, parse_or_repair_agent_response
@@ -136,16 +136,19 @@ def build_hypothesis_generation_context(
             target_entity_id=incident_frame.affected_entity_ids[1],
         )
 
+    scope = network_scope(
+        evidence_graph,
+        [
+            *incident_frame.affected_entity_ids,
+            *incident_frame.potentially_relevant_entity_ids,
+        ],
+    )
+
     return {
         "incident_frame": incident_frame.to_dict(),
         "topology_evidence": topology_evidence,
-        "network_scope": network_scope(
-            evidence_graph,
-            [
-                *incident_frame.affected_entity_ids,
-                *incident_frame.potentially_relevant_entity_ids,
-            ],
-        ),
+        "network_scope": scope,
+        "recent_changes": recent_changes(evidence_graph, scope),
         # Fix vs. the original notebook: this list was hardcoded and
         # had drifted out of sync (missing vendor_alert and
         # deep_diagnostics). Now derived from the capability
@@ -198,9 +201,15 @@ Important rules:
    of them. A fault can sit on shared infrastructure between the
    affected entities and a service, not only on the reporting
    endpoint, so consider each segment of those paths.
-8. Request only capabilities listed under available_capabilities.
-9. Do not treat benchmark ground truth as investigation evidence.
-10. Avoid duplicate hypotheses that describe the same failure
+8. recent_changes lists recorded changes on those entities, newest
+   first. When a change touched an affected entity, or one on its
+   path to a service, shortly before the symptoms began, consider a
+   hypothesis in which that change introduced the fault, and cite its
+   change_id in the mechanism. A change is a lead, not evidence of
+   cause: it must still be tested like any other hypothesis.
+9. Request only capabilities listed under available_capabilities.
+10. Do not treat benchmark ground truth as investigation evidence.
+11. Avoid duplicate hypotheses that describe the same failure
     using different wording.
 
 Return ONLY a Python dictionary with exactly this shape:
