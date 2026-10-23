@@ -278,3 +278,34 @@ def test_causal_resolution_failure_falls_back_to_the_leader(monkeypatch):
     monkeypatch.setattr(orch, "root_cause_remediation_agent", remediation)
     r = orch.run_investigation(cfg)
     assert r.causal_resolution is None and got["root_cause_hypothesis_id"] is None
+
+
+# ---- concerns cleanup after a causal chain
+
+from investigation_team.convergence import residual_concerns, resolved_by_causal_resolution
+
+
+def _report():
+    routed = HypothesisChallenge("inc-h1", "supported", 0.92, "disputed", "h1 might just be coincidence",
+                                 rival_hypothesis_id="inc-h2", distinguishing_capability="traffic",
+                                 distinguishing_observable="queue_drops", distinguishing_observation="o",
+                                 additional_evidence_needed=["ws3 backup start time"])
+    enforce_dispute_actionability([routed], supported_ids=["inc-h1", "inc-h2"])
+    upheld = HypothesisChallenge("inc-h2", "supported", 0.88, "upheld", "fine")
+    return ChallengeReport("inc", [routed, upheld], systemic_concerns=["H1 and H2 not distinguished"])
+
+
+def test_routed_rebuttal_is_not_an_open_concern_after_a_chain_but_the_evidence_gap_is():
+    res = cr.CausalResolution("causal_chain", "inc-h2", ["inc-h1"], rationale="policy missing exposed load")
+    open_ = residual_concerns(_report(), "inc-h2", extra_ids=["inc-h1"], after_causal_chain=True)
+    assert not any(c.startswith("Challenger") for c in open_)
+    assert "Evidence that would resolve it: ws3 backup start time" in open_
+    assert any(c.startswith("Systemic (raised before causal resolution)") for c in open_)
+    settled = resolved_by_causal_resolution(_report(), res)
+    assert len(settled) == 1 and "policy missing exposed load" in settled[0]
+
+
+def test_without_a_chain_concerns_are_unchanged():
+    open_ = residual_concerns(_report(), "inc-h1")
+    assert any(c.startswith("Challenger (downgraded dispute)") for c in open_)
+    assert resolved_by_causal_resolution(_report(), cr.CausalResolution("rivals", "inc-h1")) == []

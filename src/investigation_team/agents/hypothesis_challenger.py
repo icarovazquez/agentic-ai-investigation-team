@@ -126,6 +126,9 @@ class ChallengeReport:
         }
 
 
+ROUTED_NOTE_PREFIX = "Dispute routed to causal resolution"
+
+
 def enforce_dispute_actionability(
     challenges: List[HypothesisChallenge],
     supported_ids: Optional[List[str]] = None,
@@ -158,7 +161,7 @@ def enforce_dispute_actionability(
         ):
             challenge.challenge_outcome = "upheld"
             challenge.downgrade_note = (
-                f"Dispute routed to causal resolution: the rival "
+                f"{ROUTED_NOTE_PREFIX}: the rival "
                 f"({rival}) is itself supported, so the open question is "
                 "how the two relate (rivals or a causal chain), which "
                 "another evidence round cannot settle."
