@@ -14,6 +14,7 @@ residual concerns on the result.
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 from .agents.evidence_analyst import EvidenceAnalysis
@@ -21,6 +22,45 @@ from .agents.hypothesis_challenger import ChallengeReport
 from .agents.root_cause_remediation import directional_confidence, select_leading_hypothesis
 from .agents.hypothesis_challenger import ROUTED_NOTE_PREFIX
 from .domain import HypothesisStatus
+
+
+_STOPWORDS = frozenset(
+    "the of to for and or in on at by with from that this is are be as it its was were whether if which "
+    "not than into during between after before showing show determine confirm establish identify "
+    "evidence data".split()
+)
+
+
+def _content_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9.\-]+", text.lower()) if w not in _STOPWORDS and len(w) > 2}
+
+
+def dedupe_concerns(items: List[str], overlap: float = 0.6, max_items: Optional[int] = None) -> List[str]:
+    """
+    Drop concerns that repeat an earlier one in different words, then cap.
+
+    The Challenger raises the same gap once per hypothesis ("pre-upgrade QoS
+    snapshot" in three phrasings). Two items are the same when the smaller
+    one's content words overlap the larger's by `overlap` or more, which on
+    real runs separates paraphrases (0.67-0.82) from different gaps (<=0.45).
+    The first wording is kept. When the cap cuts items, a final line says so;
+    the full text stays in the challenge report.
+    """
+    kept: List[str] = []
+    kept_words: List[set] = []
+    for item in items:
+        words = _content_words(item)
+        duplicate = any(
+            len(words) >= 3 and len(other) >= 3 and len(words & other) / min(len(words), len(other)) >= overlap
+            for other in kept_words
+        )
+        if not duplicate:
+            kept.append(item)
+            kept_words.append(words)
+    if max_items is not None and len(kept) > max_items:
+        omitted = len(kept) - max_items
+        kept = kept[:max_items] + [f"({omitted} more omitted; see the challenge report)"]
+    return kept
 
 
 def check_convergence(
@@ -91,8 +131,12 @@ def residual_concerns(
                 concerns.append(f"Challenger ({label}): {c.rebuttal}")
             concerns.extend(f"Evidence that would resolve it: {e}" for e in c.additional_evidence_needed)
     prefix = "Systemic (raised before causal resolution)" if after_causal_chain else "Systemic"
-    concerns.extend(f"{prefix}: {s}" for s in challenge_report.systemic_concerns)
-    return concerns
+    systemic = [f"{prefix}: {s}" for s in challenge_report.systemic_concerns]
+
+    # Evidence-gap lines repeat across hypotheses; collapse them and cap each group.
+    gaps = [c for c in concerns if c.startswith("Evidence that would resolve it:")]
+    other = [c for c in concerns if not c.startswith("Evidence that would resolve it:")]
+    return other + dedupe_concerns(gaps, max_items=6) + dedupe_concerns(systemic, max_items=6)
 
 
 def is_routed_to_causal_resolution(challenge) -> bool:

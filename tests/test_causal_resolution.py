@@ -309,3 +309,38 @@ def test_without_a_chain_concerns_are_unchanged():
     open_ = residual_concerns(_report(), "inc-h1")
     assert any(c.startswith("Challenger (downgraded dispute)") for c in open_)
     assert resolved_by_causal_resolution(_report(), cr.CausalResolution("rivals", "inc-h1")) == []
+
+
+from investigation_team.convergence import dedupe_concerns
+
+RUN3_GAPS = [
+    "Historical WAN utilization baseline for 09:00Z on 2026-09-07 through 2026-09-13 to confirm whether 97% is anomalous or routine for that time-of-day",
+    "Per-flow or per-application bandwidth consumption data during 09:00-09:50Z on 2026-09-14 to identify specific competing traffic sources",
+    "Pre-upgrade QoS configuration snapshot (router1 running 17.6.4) showing whether WAN-EDGE-QOS was attached and its queue scheduling algorithm",
+    "Detailed interface error counters and queue statistics from router1 WAN egress broken down by traffic class or DSCP marking to confirm Teams traffic is being dropped",
+    "Pre-upgrade QoS configuration snapshot from router1 (running 17.6.4) to confirm whether WAN-EDGE-QOS was attached before the firmware upgrade",
+    "Historical WAN utilization baseline for 09:00Z on previous days to determine if 97% is anomalous or routine",
+    "Per-flow bandwidth consumption data during 09:00-09:50Z to identify whether new traffic flows appeared at 09:00",
+    "Comparison of firmware 17.6.4 vs 17.9.3 release notes or configuration behavior to confirm whether the upgrade changes default QoS attachment or queue scheduling",
+]
+
+
+def test_paraphrased_gaps_from_a_real_run_collapse_but_distinct_gaps_stay():
+    out = dedupe_concerns(RUN3_GAPS)
+    assert len(out) == 5   # 8 lines, 3 repeats
+    assert out[0] == RUN3_GAPS[0] and RUN3_GAPS[5] not in out and RUN3_GAPS[4] not in out and RUN3_GAPS[6] not in out
+    assert RUN3_GAPS[7] in out and RUN3_GAPS[3] in out   # release-notes and per-class drops are different gaps
+
+
+def test_cap_says_how_many_were_omitted():
+    items = [f"unique gap number {chr(97 + i) * 5} {chr(110 + i) * 6} {chr(65 + i) * 7}" for i in range(9)]
+    out = dedupe_concerns(items, max_items=6)
+    assert len(out) == 7 and out[-1] == "(3 more omitted; see the challenge report)"
+
+
+def test_residual_concerns_dedupes_evidence_lines():
+    c = HypothesisChallenge("inc-h1", "supported", 0.8, "disputed", "r", additional_evidence_needed=RUN3_GAPS)
+    enforce_dispute_actionability([c], supported_ids=[])
+    c.downgrade_note = "x"
+    out = residual_concerns(ChallengeReport("inc", [c], []), "inc-h1")
+    assert sum(x.startswith("Evidence that would resolve it:") for x in out) == 5
