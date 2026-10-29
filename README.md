@@ -22,11 +22,21 @@ evidence graph.
 - **Deterministic Executors & Capabilities** — plain code that answers
   specific questions (reachability, blast radius, traffic state) without
   any LLM involved.
-- **Agents** — Incident Framing, Hypothesis Generator, Evidence Planner,
-  Evidence Analyst, Hypothesis Challenger, and Root Cause & Remediation —
-  reasoning in a loop that continues until a hypothesis both clears a
-  confidence threshold and survives adversarial challenge, or the
-  investigation runs out of rounds.
+- **Agents** — Incident Framing and the Hypothesis Generator run once.
+  Then a loop of Evidence Gap Planner, Evidence Test Creator, deterministic
+  execution, Evidence Analyst and Hypothesis Challenger repeats until an
+  exit rule in code is met: a supported leader at or above the confidence
+  threshold that the Challenger upheld, the same leader for two rounds
+  (convergence), a round that returns no new evidence (exhaustion), or the
+  round limit. When more than one hypothesis is supported, Causal
+  Resolution decides whether they are rivals or a causal chain (an
+  underlying cause plus a trigger), and the choice is validated in code.
+  Root Cause & Remediation then names the root cause and any contributing
+  factors. It recommends; it never acts.
+- **Rules live in code, not prompts** — gap caps, id normalization,
+  convergence, actionable disputes, grounding checks on LLM extraction and
+  entity resolution are enforced by code, because an LLM asked to police
+  itself does not reliably do it.
 
 ## Status
 
@@ -40,7 +50,19 @@ for the architecture, the failure modes, and what's still unfinished.
 
 - NIKA network telemetry (topology + operational state)
 - PagerDuty-shaped vendor incidents
-- (in progress) ServiceNow tickets, Microsoft Teams call-quality telemetry
+- ServiceNow tickets and change records (LLM extraction, checked against
+  the ticket text)
+- Microsoft Teams call-quality telemetry
+
+## Scenarios
+
+- **Scenario 1: simple BGP link down.** One physical cause, one round
+  typically.
+- **Scenario 2: QoS contention.** Teams calls degrade although every link is
+  up and every ping succeeds. The root cause is a QoS policy detached by an
+  overnight upgrade; a backup transfer is only the trigger. Across three
+  runs on the final code it was diagnosed correctly each time in one or two
+  rounds. Three runs on one scenario is evidence, not a benchmark.
 
 ## Known open items
 
