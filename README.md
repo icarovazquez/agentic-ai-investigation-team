@@ -38,9 +38,31 @@ evidence graph.
   entity resolution are enforced by code, because an LLM asked to police
   itself does not reliably do it.
 
+## From notebook to package
+
+This started as one large notebook where every class and agent lived in
+cells. It is now a Python package, `investigation_team`, under
+`src/investigation_team/` (adapters, agents, capabilities, evidence graph,
+orchestrator, evaluation). The notebooks are thin: each one pulls the repo,
+installs the package, sets credentials, defines one scenario's
+configuration and runs the investigation. The original all-in-one notebook
+is still in `notebooks/` for reference.
+
+## Running it
+
+- **Scenarios:** open `notebooks/Scenario 1 - Simple BGP Link Down.ipynb` or
+  `notebooks/Scenario 2 - QoS Contention.ipynb` in Colab and run the cells
+  top to bottom. After the install cell, restart the runtime once.
+- **Credentials:** an Anthropic API key and Langfuse keys, provided as
+  environment variables (`ANTHROPIC_API_KEY`, `LANGFUSE_PUBLIC_KEY`,
+  `LANGFUSE_SECRET_KEY`). Never commit them.
+- **Locally:** `pip install -e .`, then `pytest`. The tests make no LLM
+  calls; set the three variables above to any dummy value so the package
+  imports.
+
 ## Status
 
-This is an active, evolving notebook, not a finished product. Read the
+This is an active, evolving project, not a finished product. Read the
 build log in [this Medium series](https://medium.com/@icaro_vazquez) —
 start with
 ["Agentic AI for the Enterprise"](https://medium.com/@icaro_vazquez/agentic-ai-for-the-enterprise-building-an-investigation-team-that-argues-with-itself-7f68fb06d4fc)
